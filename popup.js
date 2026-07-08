@@ -1,0 +1,224 @@
+/**
+ * popup.js — Lógica del popup de la extensión.
+ *
+ * El popup NO lee en voz alta (se cierra al hacer clic fuera y la voz se
+ * cortaría). Solo:
+ *   - guarda las preferencias (voz, velocidad, tono) en chrome.storage.sync,
+ *   - manda órdenes al content script de la pestaña activa,
+ *   - abre reader.html cuando la pestaña es un PDF,
+ *   - muestra avisos amables cuando una página no se puede leer.
+ */
+(() => {
+  'use strict';
+
+  // ---- Referencias a los controles -------------------------------------
+  const selVoz = document.getElementById('sel-voz');
+  const rangoVel = document.getElementById('rango-vel');
+  const txtVel = document.getElementById('txt-vel');
+  const rangoTono = document.getElementById('rango-tono');
+  const txtTono = document.getElementById('txt-tono');
+  const btnLeerPagina = document.getElementById('btn-leer-pagina');
+  const btnLeerSeleccion = document.getElementById('btn-leer-seleccion');
+  const btnPausa = document.getElementById('btn-pausa');
+  const btnDetener = document.getElementById('btn-detener');
+  const btnAnterior = document.getElementById('btn-anterior');
+  const btnSiguiente = document.getElementById('btn-siguiente');
+  const btnPdf = document.getElementById('btn-pdf');
+  const btnPermisos = document.getElementById('btn-permisos');
+  const divEstado = document.getElementById('estado');
+
+  const AJUSTES_DEFECTO = { vozNombre: '', velocidad: 1.1, tono: 1.0 };
+  let ajustes = Object.assign({}, AJUSTES_DEFECTO);
+
+  // ---- Utilidades -------------------------------------------------------
+
+  function mostrarAviso(texto, esError) {
+    divEstado.textContent = texto || '';
+    divEstado.className = esError ? 'error' : '';
+  }
+
+  /** ¿La URL apunta a un PDF? (visor nativo: no acepta content scripts) */
+  function esPdf(url) {
+    return /\.pdf($|[?#])/i.test(url || '');
+  }
+
+  /** Abre la página lectora de PDFs pasándole la URL del documento. */
+  function abrirLectorPdf(url) {
+    chrome.tabs.create({
+      url: chrome.runtime.getURL('reader.html') + (url ? '?src=' + encodeURIComponent(url) : '')
+    });
+    window.close();
+  }
+
+  /** Obtiene la pestaña activa y la pasa al callback. */
+  function conTabActiva(callback) {
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      callback(tabs && tabs[0] ? tabs[0] : null);
+    });
+  }
+
+  /**
+   * Manda una orden al content script de la pestaña activa.
+   * Si no hay content script (página restringida o PDF), avisa con cariño.
+   * `silencioso` evita el aviso (para la consulta de estado al abrir).
+   */
+  function mandar(accion, silencioso) {
+    conTabActiva((tab) => {
+      if (!tab || tab.id === undefined) return;
+      chrome.tabs.sendMessage(tab.id, { accion }, (respuesta) => {
+        if (chrome.runtime.lastError) {
+          if (silencioso) return;
+          if (esPdf(tab.url)) {
+            abrirLectorPdf(tab.url); // era un PDF: al lector directamente
+            return;
+          }
+          mostrarAviso(
+            'En esta página el navegador no permite leer (páginas internas como ' +
+            'chrome:// o about:, o la tienda de extensiones). Prueba en una página web normal.',
+            true
+          );
+          return;
+        }
+        if (respuesta && respuesta.ok === false && respuesta.error === 'sin-texto') {
+          mostrarAviso('No se encontró texto legible en esta página.', true);
+          return;
+        }
+        if (respuesta && respuesta.estado) pintarEstado(respuesta.estado);
+      });
+    });
+  }
+
+  /** Refleja el estado de la lectura en el popup. */
+  function pintarEstado(estado) {
+    // Sin texto cargado no hay nada que pintar (y no pisamos otros avisos).
+    if (!estado || !estado.total) return;
+    if (estado.leyendo) {
+      mostrarAviso(
+        (estado.enPausa ? '⏸ En pausa — oración ' : '▶ Leyendo — oración ') +
+        (estado.indice + 1) + ' de ' + estado.total
+      );
+    } else {
+      mostrarAviso('⏹ Lectura detenida (' + estado.total + ' oraciones cargadas).');
+    }
+  }
+
+  // ---- Voces (las de español SIEMPRE arriba) -----------------------------
+
+  function poblarVoces() {
+    const voces = speechSynthesis.getVoices() || [];
+    if (!voces.length) return; // llegarán con onvoiceschanged
+
+    const esEspanola = (v) => v.lang && v.lang.toLowerCase().startsWith('es');
+    const porIdiomaYNombre = (a, b) =>
+      a.lang.localeCompare(b.lang) || a.name.localeCompare(b.name);
+    const espanolas = voces.filter(esEspanola).sort(porIdiomaYNombre);
+    const otras = voces.filter((v) => !esEspanola(v)).sort(porIdiomaYNombre);
+
+    selVoz.innerHTML = '';
+
+    // Opción automática: la primera voz en español disponible.
+    const auto = document.createElement('option');
+    auto.value = '';
+    auto.textContent = '✨ Automática (primera voz en español)';
+    selVoz.appendChild(auto);
+
+    const anadirGrupo = (etiqueta, lista) => {
+      if (!lista.length) return;
+      const grupo = document.createElement('optgroup');
+      grupo.label = etiqueta;
+      for (const voz of lista) {
+        const op = document.createElement('option');
+        op.value = voz.name;
+        op.textContent = voz.name + ' (' + voz.lang + ')' + (voz.localService ? '' : ' · online');
+        grupo.appendChild(op);
+      }
+      selVoz.appendChild(grupo);
+    };
+    anadirGrupo('Español', espanolas);
+    anadirGrupo('Otros idiomas', otras);
+
+    // Restaurar la voz guardada si sigue instalada.
+    selVoz.value = ajustes.vozNombre || '';
+    if (selVoz.value !== (ajustes.vozNombre || '')) selVoz.value = '';
+  }
+
+  // En Chromium getVoices() devuelve [] al abrir: repoblar cuando avisen.
+  speechSynthesis.addEventListener('voiceschanged', poblarVoces);
+
+  // ---- Guardado de preferencias ------------------------------------------
+
+  let temporizadorGuardado = null;
+  /** Guarda con un pequeño retraso para no saturar mientras se arrastra el slider. */
+  function guardarConRetraso(parcial) {
+    Object.assign(ajustes, parcial);
+    clearTimeout(temporizadorGuardado);
+    temporizadorGuardado = setTimeout(() => chrome.storage.sync.set(parcial), 250);
+  }
+
+  selVoz.addEventListener('change', () => {
+    ajustes.vozNombre = selVoz.value;
+    chrome.storage.sync.set({ vozNombre: selVoz.value });
+  });
+
+  rangoVel.addEventListener('input', () => {
+    txtVel.textContent = Number(rangoVel.value).toFixed(1) + '×';
+    guardarConRetraso({ velocidad: parseFloat(rangoVel.value) });
+  });
+
+  rangoTono.addEventListener('input', () => {
+    txtTono.textContent = Number(rangoTono.value).toFixed(1);
+    guardarConRetraso({ tono: parseFloat(rangoTono.value) });
+  });
+
+  // ---- Botones ------------------------------------------------------------
+
+  btnLeerPagina.addEventListener('click', () => mandar('leer-pagina'));
+  btnLeerSeleccion.addEventListener('click', () => mandar('leer-seleccion'));
+  btnPausa.addEventListener('click', () => mandar('pausa-reanudar'));
+  btnDetener.addEventListener('click', () => mandar('detener'));
+  btnAnterior.addEventListener('click', () => mandar('anterior'));
+  btnSiguiente.addEventListener('click', () => mandar('siguiente'));
+
+  // ---- Arranque -------------------------------------------------------------
+
+  // 1. Cargar preferencias guardadas y reflejarlas en los controles.
+  chrome.storage.sync.get(AJUSTES_DEFECTO, (guardados) => {
+    ajustes = Object.assign({}, AJUSTES_DEFECTO, guardados || {});
+    rangoVel.value = String(ajustes.velocidad);
+    txtVel.textContent = Number(ajustes.velocidad).toFixed(1) + '×';
+    rangoTono.value = String(ajustes.tono);
+    txtTono.textContent = Number(ajustes.tono).toFixed(1);
+    poblarVoces();
+  });
+
+  // 2. Si la pestaña activa es un PDF, ofrecer el lector especial.
+  conTabActiva((tab) => {
+    if (tab && esPdf(tab.url)) {
+      btnPdf.style.display = 'block';
+      btnPdf.addEventListener('click', () => abrirLectorPdf(tab.url));
+      mostrarAviso('Esta pestaña es un PDF: usa el botón rojo para leerlo.');
+    }
+  });
+
+  // 3. En Firefox el permiso de acceso a los sitios se concede aparte:
+  //    si falta, mostramos un botón para pedirlo con un clic.
+  try {
+    chrome.permissions.contains({ origins: ['<all_urls>'] }, (concedido) => {
+      if (concedido) return;
+      btnPermisos.style.display = 'block';
+      btnPermisos.addEventListener('click', () => {
+        chrome.permissions.request({ origins: ['<all_urls>'] }, (ok) => {
+          if (ok) {
+            btnPermisos.style.display = 'none';
+            mostrarAviso('¡Permiso concedido! Recarga la página que quieras leer.');
+          }
+        });
+      });
+    });
+  } catch (e) { /* permissions no disponible: seguimos sin el botón */ }
+
+  // 4. Preguntar el estado actual de la lectura y refrescarlo mientras
+  //    el popup siga abierto.
+  mandar('estado', true);
+  setInterval(() => mandar('estado', true), 1000);
+})();

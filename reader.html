@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <title>Lector TTS — Lector de PDF</title>
+  <style>
+    /* Página lectora de PDFs: mismo estilo oscuro que el panel */
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; }
+    body {
+      background: #17171d; color: #e9e9ef;
+      font-family: Georgia, 'Times New Roman', serif;
+      display: flex; flex-direction: column;
+    }
+
+    /* Barra superior con los controles */
+    header {
+      flex: none; position: sticky; top: 0; z-index: 10;
+      background: #1f1f28; border-bottom: 1px solid #2c2c36;
+      padding: 10px 18px;
+      font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+      display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+    }
+    .titulo {
+      flex: 1 1 200px; min-width: 120px;
+      font-size: 14px; font-weight: 600; color: #fff;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    button, select {
+      appearance: none; border: 1px solid #343442; background: #262633;
+      color: #e9e9ef; border-radius: 8px; cursor: pointer;
+      font-size: 13px; padding: 8px 12px;
+      font-family: inherit;
+    }
+    button:hover { background: #32323f; }
+    .primario { background: #6c5cff; border-color: #6c5cff; color: #fff; }
+    .primario:hover { background: #7d6fff; }
+    select { max-width: 220px; font-size: 12px; }
+    .fila-vel { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #9a9aac; }
+    input[type="range"] {
+      width: 110px; appearance: none; -webkit-appearance: none; height: 5px;
+      background: #343442; border-radius: 3px; outline: none; cursor: pointer;
+    }
+    input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none; width: 15px; height: 15px; border-radius: 50%;
+      background: #6c5cff; border: 2px solid #fff; cursor: pointer;
+    }
+    input[type="range"]::-moz-range-thumb {
+      width: 12px; height: 12px; border-radius: 50%;
+      background: #6c5cff; border: 2px solid #fff; cursor: pointer;
+    }
+    #txt-vel { min-width: 36px; color: #fff; font-weight: 600; }
+    #progreso { font-size: 12px; color: #9a9aac; }
+
+    /* Zona de contenido con el texto del PDF */
+    main { flex: 1; overflow-y: auto; }
+    .columna {
+      max-width: 760px; margin: 0 auto; padding: 34px 28px 60vh;
+      font-size: 19px; line-height: 1.7;
+    }
+    .oracion { cursor: pointer; border-radius: 4px; padding: 1px 2px; }
+    .oracion:hover { background: rgba(124, 92, 255, .14); }
+    .oracion.actual { background: rgba(124, 92, 255, .26); }
+    .palabra.palabra-actual { background: #6c5cff; color: #fff; border-radius: 3px; }
+
+    /* Mensajes de estado / bienvenida */
+    #estado {
+      font-family: system-ui, sans-serif; font-size: 14.5px; line-height: 1.6;
+      color: #c9c9d6; background: #262633; border: 1px solid #343442;
+      border-radius: 10px; padding: 16px 18px; margin-bottom: 22px;
+    }
+    #estado.oculto { display: none; }
+    #estado.error { border-color: #b3453a; color: #ffb3a8; }
+    #estado kbd {
+      background: #17171d; border: 1px solid #343442; border-radius: 4px; padding: 0 4px;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <span class="titulo" id="titulo">Lector de PDF</span>
+    <button id="btn-anterior" title="Oración anterior">⏮</button>
+    <button id="btn-pausa" class="primario" title="Pausar / Reanudar">⏸</button>
+    <button id="btn-siguiente" title="Oración siguiente">⏭</button>
+    <div class="fila-vel">
+      <input type="range" id="rango-vel" min="0.5" max="5" step="0.1" value="1.1">
+      <span id="txt-vel">1.1×</span>
+    </div>
+    <select id="sel-voz" title="Voz"></select>
+    <button id="btn-abrir" title="Abrir un PDF de tu equipo">📂 Abrir PDF…</button>
+    <span id="progreso"></span>
+  </header>
+
+  <main>
+    <div class="columna">
+      <div id="estado">Preparando el lector…</div>
+      <div id="contenido"></div>
+    </div>
+  </main>
+
+  <!-- Selector de archivo oculto, para PDFs locales -->
+  <input type="file" id="input-archivo" accept="application/pdf,.pdf" style="display:none">
+
+  <!-- Motor de lectura compartido (script clásico) y lógica del lector (módulo,
+       porque pdf.js v4 se distribuye como módulo ES). Todo local: nada de CDNs. -->
+  <script src="speech-engine.js"></script>
+  <script type="module" src="reader.js"></script>
+</body>
+</html>

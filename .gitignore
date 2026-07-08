@@ -1,0 +1,9 @@
+# Basura del sistema operativo
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Empaquetados locales
+*.zip
+*.xpi
+web-ext-artifacts/

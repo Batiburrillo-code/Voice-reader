@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <title>Lector TTS</title>
+  <style>
+    /* Popup oscuro y compacto, estilo Speechify */
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      width: 330px;
+      background: #17171d; color: #e9e9ef;
+      font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+      font-size: 13px;
+      padding: 14px 14px 12px;
+    }
+    h1 {
+      font-size: 15px; font-weight: 700; color: #fff;
+      display: flex; align-items: center; gap: 8px; margin-bottom: 12px;
+    }
+    h1 .punto { color: #6c5cff; }
+    label { display: block; font-size: 11.5px; color: #9a9aac; margin: 10px 0 4px; }
+    select {
+      width: 100%; padding: 8px; border-radius: 8px;
+      border: 1px solid #343442; background: #262633; color: #e9e9ef;
+      font-size: 12.5px; cursor: pointer;
+    }
+    .fila-slider { display: flex; align-items: center; gap: 10px; }
+    .fila-slider output { min-width: 42px; text-align: right; color: #fff; font-weight: 600; font-size: 12.5px; }
+    input[type="range"] {
+      flex: 1; appearance: none; -webkit-appearance: none; height: 5px;
+      background: #343442; border-radius: 3px; outline: none; cursor: pointer;
+    }
+    input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none; width: 16px; height: 16px; border-radius: 50%;
+      background: #6c5cff; border: 2px solid #fff; cursor: pointer;
+    }
+    input[type="range"]::-moz-range-thumb {
+      width: 13px; height: 13px; border-radius: 50%;
+      background: #6c5cff; border: 2px solid #fff; cursor: pointer;
+    }
+    .botones { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 14px; }
+    button {
+      appearance: none; border: 1px solid #343442; border-radius: 9px;
+      background: #262633; color: #e9e9ef; cursor: pointer;
+      padding: 9px 8px; font-size: 12.5px; font-weight: 600;
+    }
+    button:hover { background: #32323f; }
+    .primario { background: #6c5cff; border-color: #6c5cff; color: #fff; }
+    .primario:hover { background: #7d6fff; }
+    .transporte { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 8px; }
+    .transporte button { font-size: 15px; padding: 8px 4px; }
+    .ancho { grid-column: 1 / -1; }
+    #btn-pdf, #btn-permisos { display: none; margin-top: 8px; width: 100%; }
+    #btn-pdf { background: #b3453a; border-color: #b3453a; color: #fff; }
+    #btn-pdf:hover { background: #c85a4e; }
+    #estado {
+      margin-top: 10px; min-height: 16px; font-size: 11.5px;
+      color: #9a9aac; line-height: 1.45;
+    }
+    #estado.error { color: #ff9d8f; }
+    .pie {
+      margin-top: 10px; padding-top: 8px; border-top: 1px solid #2c2c36;
+      font-size: 10.5px; color: #6e6e80; line-height: 1.5;
+    }
+    kbd {
+      background: #262633; border: 1px solid #343442; border-radius: 4px;
+      padding: 0 4px; font-family: inherit;
+    }
+  </style>
+</head>
+<body>
+  <h1><span class="punto">●</span> Lector TTS</h1>
+
+  <!-- Selector de voz: las voces en español aparecen primero -->
+  <label for="sel-voz">Voz</label>
+  <select id="sel-voz"></select>
+
+  <!-- Velocidad: de 0.5× a 5× (algunas voces limitan el máximo real) -->
+  <label for="rango-vel">Velocidad</label>
+  <div class="fila-slider">
+    <input type="range" id="rango-vel" min="0.5" max="5" step="0.1" value="1.1">
+    <output id="txt-vel">1.1×</output>
+  </div>
+
+  <!-- Tono de la voz -->
+  <label for="rango-tono">Tono</label>
+  <div class="fila-slider">
+    <input type="range" id="rango-tono" min="0.5" max="2" step="0.1" value="1">
+    <output id="txt-tono">1.0</output>
+  </div>
+
+  <!-- Acciones principales -->
+  <div class="botones">
+    <button id="btn-leer-pagina" class="primario">▶ Leer página</button>
+    <button id="btn-leer-seleccion">🔊 Leer selección</button>
+  </div>
+
+  <!-- Transporte: anterior / pausa-reanudar / detener / siguiente -->
+  <div class="transporte">
+    <button id="btn-anterior" title="Oración anterior">⏮</button>
+    <button id="btn-pausa" title="Pausar / Reanudar">⏯</button>
+    <button id="btn-detener" title="Detener">⏹</button>
+    <button id="btn-siguiente" title="Oración siguiente">⏭</button>
+  </div>
+
+  <!-- Solo aparece si la pestaña actual es un PDF -->
+  <button id="btn-pdf">📄 Leer este PDF en el lector</button>
+
+  <!-- Solo aparece en Firefox si falta el permiso de acceso a los sitios -->
+  <button id="btn-permisos">🔓 Conceder acceso a los sitios web</button>
+
+  <div id="estado"></div>
+
+  <div class="pie">
+    Atajo: <kbd>Alt</kbd>+<kbd>L</kbd> lee la selección · Clic derecho → «🔊 Leer selección»
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
