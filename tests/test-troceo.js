@@ -1,0 +1,114 @@
+// Pruebas del troceador de oraciones de speech-engine.js (se ejecutan con Node,
+// fuera del navegador). Uso:  node tests/test-troceo.js
+'use strict';
+const fs = require('fs');
+const path = require('path');
+const rutaMotor = path.join(__dirname, '..', 'speech-engine.js');
+eval(fs.readFileSync(rutaMotor, 'utf8')); // define globalThis.LectorTTS (sin window ni chrome)
+
+const { trocearEnOraciones, trocearRangos, esVozNeural, idPiper } = globalThis.LectorTTS;
+let fallos = 0;
+
+function caso(nombre, texto, comprobaciones) {
+  const res = trocearEnOraciones(texto);
+  const todasOk = comprobaciones.every(([desc, fn]) => {
+    const ok = fn(res);
+    if (!ok) { console.log(`  ✗ ${desc}`); fallos++; }
+    return ok;
+  });
+  console.log(`${todasOk ? '✓' : '✗'} ${nombre} → ${res.length} oraciones`);
+  if (!todasOk) console.log('   resultado:', JSON.stringify(res, null, 1));
+}
+
+// 1. Texto normal en español
+caso('Texto normal',
+  'El sol salió temprano aquella mañana de primavera en el pequeño pueblo. Los pájaros cantaban en los árboles del parque central mientras la gente paseaba. ¿Quién podría imaginar lo que estaba a punto de suceder en aquel lugar tan tranquilo? Nadie lo sabía.',
+  [
+    ['al menos 2 oraciones', r => r.length >= 2],
+    ['ninguna supera 250 chars', r => r.every(o => o.length <= 251)],
+    ['no se pierde texto significativo', r => r.join(' ').length > 200]
+  ]);
+
+// 2. Abreviaturas: no debe cortar en "Sr." dejando migas sueltas
+caso('Abreviaturas (Sr., EE. UU.)',
+  'El Sr. Pérez viajó a los EE. UU. la semana pasada para visitar a su familia que vive allí desde hace muchos años y no pudo regresar.',
+  [
+    ['fragmentos cortos unidos (ninguno < 30 chars)', r => r.every(o => o.length >= 30 || r.length === 1)]
+  ]);
+
+// 3. Oración larguísima (> 250): debe partirse
+const larga = 'Esta es una oración extremadamente larga que sigue y sigue sin parar, ' +
+  'añadiendo cláusulas y más cláusulas, con comas por todas partes, hablando de cosas variadas como el clima, ' +
+  'la economía, los viajes, la gastronomía regional, las costumbres locales, la historia antigua y moderna, ' +
+  'los avances tecnológicos recientes y muchas otras cuestiones de interés general para el lector curioso.';
+caso('Oración > 250 caracteres', larga, [
+  ['se parte en varias', r => r.length >= 2],
+  ['ningún trozo > 251 chars', r => r.every(o => o.length <= 251)],
+  ['no se pierde texto', r => Math.abs(r.join(' ').replace(/\s+/g, ' ').length - larga.length) < 10]
+]);
+
+// 4. Texto sin espacios ni puntuación (URL kilométrica): corte duro, sin bucle infinito
+caso('Sin espacios (corte duro)', 'x'.repeat(900), [
+  ['se parte', r => r.length >= 3],
+  ['ningún trozo > 251', r => r.every(o => o.length <= 251)]
+]);
+
+// 5. Vacíos y espacios
+caso('Cadena vacía', '', [['devuelve []', r => r.length === 0]]);
+caso('Solo espacios', '   \n\t  ', [['devuelve []', r => r.length === 0]]);
+
+// 6. Puntos suspensivos y exclamaciones
+caso('Puntuación variada',
+  '¡Qué sorpresa tan grande nos llevamos todos aquel día inolvidable! ¿En serio no lo sabías todavía, después de tanto tiempo? Pues así fue… Nadie dijo nada más durante el resto de la tarde.',
+  [
+    ['varias oraciones', r => r.length >= 2],
+    ['conserva el texto', r => r.join(' ').includes('sorpresa')]
+  ]);
+
+// 7. Saltos de línea y espacios repetidos (texto típico de PDF)
+caso('Texto de PDF con saltos',
+  'Primera   línea\ndel documento con   espacios raros.\n\nSegunda parte del texto que continúa aquí con más contenido para superar el mínimo.\n',
+  [
+    ['espacios normalizados', r => r.every(o => !/\s{2,}/.test(o) && !o.includes('\n'))]
+  ]);
+
+// ---- Pruebas de trocearRangos (posiciones + cortes de bloque) ----
+
+function casoRangos(nombre, texto, cortes, comprobaciones) {
+  const res = trocearRangos(texto, cortes);
+  const todasOk = comprobaciones.every(([desc, fn]) => {
+    const ok = fn(res);
+    if (!ok) { console.log(`  ✗ ${desc}`); fallos++; }
+    return ok;
+  });
+  console.log(`${todasOk ? '✓' : '✗'} [rangos] ${nombre} → ${res.length} rangos`);
+  if (!todasOk) console.log('   resultado:', JSON.stringify(res));
+}
+
+// 8. Los rangos apuntan a posiciones reales y ordenadas del texto
+const textoR = 'El primer párrafo del artículo cuenta una historia bastante interesante. Y sigue un poco más aquí.';
+casoRangos('Posiciones válidas y ordenadas', textoR, [], [
+  ['todas dentro del texto', r => r.every(o => o.ini >= 0 && o.fin <= textoR.length && o.ini < o.fin)],
+  ['ordenadas y sin solaparse', r => r.every((o, i) => i === 0 || o.ini >= r[i - 1].fin)],
+  ['reconstruyen el contenido', r => r.map(o => textoR.slice(o.ini, o.fin)).join('').replace(/\s+/g, ' ').trim().length >= textoR.replace(/\s+/g, ' ').trim().length - 2]
+]);
+
+// 9. Un corte de bloque (título + párrafo sin punto) no se puede cruzar
+const titulo = 'Introducción a la astronomía moderna';
+const parrafo = 'La astronomía estudia los cuerpos celestes del universo y sus movimientos a lo largo del tiempo.';
+const textoBloques = titulo + parrafo; // pegados, como saldrían de dos bloques HTML
+casoRangos('Corte de bloque título/párrafo', textoBloques, [titulo.length], [
+  ['ninguna oración cruza el corte', r => r.every(o => o.fin <= titulo.length || o.ini >= titulo.length)],
+  ['el título queda como oración propia', r => r.some(o => textoBloques.slice(o.ini, o.fin).trim() === titulo)]
+]);
+
+// 10. Utilidades de voces neuronales
+const okNeural = esVozNeural('piper:es_ES-davefx-medium') === true
+  && esVozNeural('Microsoft Helena') === false
+  && esVozNeural('') === false
+  && idPiper('piper:es_MX-claude-high') === 'es_MX-claude-high';
+console.log((okNeural ? '✓' : '✗') + ' utilidades esVozNeural/idPiper');
+if (!okNeural) fallos++;
+
+console.log(fallos === 0 ? '\nTODAS LAS PRUEBAS PASAN ✓' : `\n${fallos} COMPROBACIONES FALLAN ✗`);
+process.exit(fallos === 0 ? 0 : 1);
