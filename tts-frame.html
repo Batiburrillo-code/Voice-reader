@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <title>Motor neuronal — Lector TTS</title>
+  <!--
+    Página invisible de la extensión. content.js la incrusta como iframe
+    oculto en la página que se está leyendo: aquí la política de seguridad
+    de la extensión permite ejecutar el WASM de Piper/ONNX, cosa que un
+    content script no puede hacer. Recibe texto por postMessage y devuelve
+    el audio WAV sintetizado.
+  -->
+</head>
+<body>
+  <script type="module" src="tts-frame.js"></script>
+</body>
+</html>

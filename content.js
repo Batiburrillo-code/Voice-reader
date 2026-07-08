@@ -1,13 +1,24 @@
 /**
  * content.js — Se ejecuta en cada página web.
  *
- * Hace tres cosas:
- *   1. Extrae el texto a leer (selección, o artículo con Readability.js).
- *   2. Muestra el panel lector lateral con las oraciones y el resaltado.
- *   3. Atiende las órdenes del popup y del background (leer, pausar, saltar…).
+ * Desde la v1.1 el resaltado se hace SOBRE EL PROPIO TEXTO DE LA PÁGINA
+ * (como Speechify): la oración que suena se ilumina en su sitio, la palabra
+ * actual se marca dentro de ella y la página se desplaza sola. Nada de barra
+ * lateral. Los controles van en una barrita flotante abajo.
  *
- * La voz se genera aquí, en la página, con el motor de speech-engine.js.
- * Así la lectura sigue sonando aunque el popup se cierre.
+ * Cómo funciona:
+ *   1. Se recorren los nodos de texto visibles de la página (o de la
+ *      selección) y se construye un "texto total" recordando de qué nodo
+ *      salió cada trozo (el mapa).
+ *   2. El texto se trocea en oraciones POR POSICIONES (LectorTTS.trocearRangos),
+ *      sin cruzar límites de párrafo/título.
+ *   3. Al leer, cada oración/palabra se convierte en un Range del DOM y se
+ *      pinta con la CSS Custom Highlight API (no modifica la página). En
+ *      navegadores viejos sin esa API se usa la selección como respaldo.
+ *
+ * Las voces neuronales (Piper) se sintetizan en un iframe oculto de la
+ * extensión (tts-frame.html), porque ahí la política de seguridad permite
+ * ejecutar WASM; el audio resultante se reproduce aquí, en la página.
  */
 (() => {
   'use strict';
@@ -17,330 +28,581 @@
   window.__lectorTTSCargado = true;
 
   const motor = LectorTTS.crearMotorLectura();
-  let oracionesActuales = []; // las oraciones que se están mostrando/leyendo
-  let panel = null;           // referencias al panel lateral (o null si está cerrado)
 
-  // Cargar las preferencias guardadas (voz, velocidad, tono).
+  // Estado de la lectura en curso (o null).
+  // { texto, mapa: [{nodo, desde, hasta, ini}], oraciones: [{ini, fin}] }
+  let lectura = null;
+  let barra = null;          // barrita flotante de controles
+  let usandoSeleccion = false; // respaldo de resaltado con la selección
+
+  // ¿Este navegador tiene la CSS Custom Highlight API?
+  // (Chrome/Edge/Opera 105+, Firefox 140+)
+  const soportaHighlight =
+    typeof Highlight === 'function' &&
+    typeof CSS !== 'undefined' && CSS.highlights;
+  let hlOracion = null;
+  let hlPalabra = null;
+
+  // ------------------------------------------------------------------
+  // Ajustes: carga inicial y sincronización con el popup
+  // ------------------------------------------------------------------
+
   LectorTTS.cargarAjustes((ajustes) => { motor.ajustes = ajustes; });
 
-  // Si el usuario cambia algo en el popup (o en el propio panel), se guarda en
-  // chrome.storage.sync y aquí lo aplicamos al vuelo relanzando la oración actual.
   chrome.storage.onChanged.addListener((cambios, area) => {
     if (area !== 'sync') return;
-    let cambiado = false;
-    for (const clave of ['vozNombre', 'velocidad', 'tono']) {
-      if (clave in cambios) {
-        motor.ajustes[clave] = cambios[clave].newValue;
-        cambiado = true;
-      }
+    if ('velocidad' in cambios) {
+      motor.fijarVelocidad(cambios.velocidad.newValue);
+      sincronizarVelocidadBarra();
     }
-    if (!cambiado) return;
-    if (panel) sincronizarVelocidadPanel();
-    if (motor.leyendo && !motor.enPausa) {
-      motor.saltarA(motor.indice); // relanza la oración actual con los nuevos ajustes
-    }
+    if ('tono' in cambios) motor.fijarTono(cambios.tono.newValue);
+    if ('vozNombre' in cambios) motor.fijarVoz(cambios.vozNombre.newValue);
   });
 
   // ------------------------------------------------------------------
-  // Extracción del texto de la página
+  // Recolección del texto visible de la página
   // ------------------------------------------------------------------
 
-  /**
-   * Extrae el artículo principal con Readability.js. Como Readability MUTA el
-   * DOM que analiza, se aplica siempre sobre una copia (document.cloneNode).
-   * Si no encuentra un artículo, se usa el texto visible del body.
-   */
-  function extraerArticulo() {
-    let titulo = document.title || 'Página';
-    let texto = '';
-    try {
-      const copia = document.cloneNode(true); // ¡nunca sobre el documento real!
-      const articulo = new Readability(copia).parse();
-      if (articulo && articulo.textContent && articulo.textContent.trim().length > 200) {
-        texto = articulo.textContent;
-        if (articulo.title) titulo = articulo.title;
+  // Elementos cuyo texto nunca se lee.
+  const IGNORAR = new Set([
+    'SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'IFRAME', 'OBJECT', 'EMBED',
+    'SVG', 'CANVAS', 'AUDIO', 'VIDEO', 'SELECT', 'TEXTAREA', 'BUTTON',
+    'SUP', 'SUB' // notas al pie tipo [1] de Wikipedia y similares
+  ]);
+  // En modo "página completa", además se salta la "carpintería" del sitio.
+  const IGNORAR_PAGINA = new Set(['NAV', 'HEADER', 'FOOTER', 'ASIDE', 'FORM', 'DIALOG']);
+  // Etiquetas que marcan un límite de bloque (una oración no puede cruzarlo).
+  const BLOQUES = new Set([
+    'P', 'DIV', 'SECTION', 'ARTICLE', 'MAIN', 'BODY', 'LI', 'UL', 'OL',
+    'TABLE', 'TR', 'TD', 'TH', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6',
+    'BLOCKQUOTE', 'PRE', 'DT', 'DD', 'FIGURE', 'FIGCAPTION'
+  ]);
+
+  /** ¿El elemento se ve? (con caché, porque se consulta muchísimo) */
+  function crearDetectorVisibilidad() {
+    const cache = new Map();
+    return function esVisible(el) {
+      if (!el) return false;
+      if (cache.has(el)) return cache.get(el);
+      let visible;
+      if (typeof el.checkVisibility === 'function') {
+        visible = el.checkVisibility(); // cubre display:none y visibility
+      } else {
+        visible = !!(el.getClientRects && el.getClientRects().length);
       }
-    } catch (e) {
-      // Readability puede fallar en páginas raras: usamos el plan B.
+      cache.set(el, visible);
+      return visible;
+    };
+  }
+
+  /** Bloque contenedor más cercano de un elemento (para los cortes). */
+  function bloqueDe(el) {
+    for (let e = el; e; e = e.parentElement) {
+      if (BLOQUES.has(e.tagName)) return e;
     }
-    if (!texto.trim()) {
-      texto = document.body ? document.body.innerText : '';
+    return document.body;
+  }
+
+  /**
+   * Recorre los nodos de texto visibles bajo `raiz` (limitados a `rango` si
+   * se pasa) y devuelve {texto, mapa, cortes}.
+   */
+  function recolectar(raiz, rango, modoPagina) {
+    const esVisible = crearDetectorVisibilidad();
+    const decisionCache = new Map(); // elemento → ¿aceptado?
+
+    function aceptaElemento(el) {
+      if (!el) return false;
+      if (decisionCache.has(el)) return decisionCache.get(el);
+      let ok = true;
+      for (let e = el; e && ok; e = e.parentElement) {
+        if (IGNORAR.has(e.tagName)) ok = false;
+        else if (modoPagina && IGNORAR_PAGINA.has(e.tagName)) ok = false;
+        else if (e.id && String(e.id).startsWith('__lector-tts')) ok = false;
+      }
+      if (ok) ok = esVisible(el);
+      decisionCache.set(el, ok);
+      return ok;
     }
-    return { titulo, texto };
+
+    const walker = document.createTreeWalker(raiz, NodeFilter.SHOW_TEXT, {
+      acceptNode(nodo) {
+        if (!nodo.data || !nodo.data.trim()) return NodeFilter.FILTER_REJECT;
+        if (rango && !rango.intersectsNode(nodo)) return NodeFilter.FILTER_REJECT;
+        return aceptaElemento(nodo.parentElement)
+          ? NodeFilter.FILTER_ACCEPT
+          : NodeFilter.FILTER_REJECT;
+      }
+    });
+
+    let texto = '';
+    const mapa = [];
+    const cortes = [];
+    let bloquePrevio = null;
+
+    let nodo;
+    while ((nodo = walker.nextNode())) {
+      // Si leemos una selección, recorta el primer y el último nodo.
+      let desde = 0;
+      let hasta = nodo.data.length;
+      if (rango) {
+        if (nodo === rango.startContainer) desde = rango.startOffset;
+        if (nodo === rango.endContainer) hasta = rango.endOffset;
+      }
+      if (hasta <= desde) continue;
+
+      // Cambio de párrafo/título → una oración no puede cruzar por aquí.
+      const bloque = bloqueDe(nodo.parentElement);
+      if (bloquePrevio && bloque !== bloquePrevio && texto.length) {
+        cortes.push(texto.length);
+      }
+      bloquePrevio = bloque;
+
+      mapa.push({ nodo, desde, hasta, ini: texto.length });
+      texto += nodo.data.slice(desde, hasta);
+    }
+    return { texto, mapa, cortes };
+  }
+
+  /** Mejor contenedor del contenido principal de la página. */
+  function elegirRaiz() {
+    return document.querySelector('article')
+      || document.querySelector('main, [role="main"]')
+      || document.body;
   }
 
   // ------------------------------------------------------------------
-  // Panel lector lateral (dentro de un Shadow DOM para que el CSS de la
-  // página no lo rompa, y con z-index máximo para quedar siempre encima)
+  // Resaltado sobre el texto real (Custom Highlight API + respaldo)
   // ------------------------------------------------------------------
 
-  const ESTILOS_PANEL = `
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    .panel {
-      width: 100%; height: 100%;
-      display: flex; flex-direction: column;
-      background: #17171d; color: #e9e9ef;
-      font-family: Georgia, 'Times New Roman', serif;
-      border-left: 1px solid #2c2c36;
-      box-shadow: -10px 0 32px rgba(0, 0, 0, .45);
+  function prepararResaltado() {
+    if (!soportaHighlight) return;
+    if (!hlOracion) {
+      hlOracion = new Highlight();
+      hlPalabra = new Highlight();
+      CSS.highlights.set('lector-tts-oracion', hlOracion);
+      CSS.highlights.set('lector-tts-palabra', hlPalabra);
     }
-    header {
-      flex: none; padding: 10px 14px;
-      background: #1f1f28; border-bottom: 1px solid #2c2c36;
-      font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+    if (!document.getElementById('__lector-tts-estilos')) {
+      const estilos = document.createElement('style');
+      estilos.id = '__lector-tts-estilos';
+      estilos.textContent =
+        '::highlight(lector-tts-oracion){background-color:rgba(108,92,255,.30);}' +
+        '::highlight(lector-tts-palabra){background-color:#6c5cff;color:#fff;}';
+      (document.head || document.documentElement).appendChild(estilos);
     }
-    .fila { display: flex; align-items: center; gap: 8px; }
-    .titulo-fila { margin-bottom: 8px; }
-    .titulo {
-      flex: 1; font-size: 14px; font-weight: 600; color: #fff;
-      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+
+  function limpiarResaltado() {
+    if (hlOracion) hlOracion.clear();
+    if (hlPalabra) hlPalabra.clear();
+    if (usandoSeleccion) {
+      try { window.getSelection().removeAllRanges(); } catch (e) { /* nada */ }
+      usandoSeleccion = false;
     }
-    .btn {
-      appearance: none; border: 1px solid #343442; background: #262633;
-      color: #e9e9ef; border-radius: 8px; cursor: pointer;
-      font-size: 14px; line-height: 1; padding: 7px 10px;
+  }
+
+  /** Busca el segmento del mapa que contiene la posición `pos`. */
+  function buscarSegmento(pos) {
+    if (!lectura) return -1;
+    const mapa = lectura.mapa;
+    let a = 0;
+    let b = mapa.length - 1;
+    while (a <= b) {
+      const m = (a + b) >> 1;
+      const seg = mapa[m];
+      const len = seg.hasta - seg.desde;
+      if (pos < seg.ini) b = m - 1;
+      else if (pos >= seg.ini + len) a = m + 1;
+      else return m;
     }
-    .btn:hover { background: #32323f; }
-    .btn-principal { background: #6c5cff; border-color: #6c5cff; font-size: 15px; padding: 7px 14px; }
-    .btn-principal:hover { background: #7d6fff; }
-    .btn-cerrar { padding: 6px 9px; }
-    select {
-      appearance: none; border: 1px solid #343442; background: #262633;
-      color: #e9e9ef; border-radius: 8px; padding: 7px 8px;
-      font-size: 12px; cursor: pointer;
+    return -1;
+  }
+
+  /** Convierte posiciones [a, b) del texto total en un Range del DOM. */
+  function crearRango(a, b) {
+    if (!lectura || b <= a) return null;
+    const iA = buscarSegmento(a);
+    const iB = buscarSegmento(b - 1);
+    if (iA < 0 || iB < 0) return null;
+    const segA = lectura.mapa[iA];
+    const segB = lectura.mapa[iB];
+    if (!segA.nodo.isConnected || !segB.nodo.isConnected) return null;
+    try {
+      const r = document.createRange();
+      r.setStart(segA.nodo, segA.desde + (a - segA.ini));
+      r.setEnd(segB.nodo, segB.desde + (b - 1 - segB.ini) + 1);
+      return r;
+    } catch (e) {
+      return null; // la página cambió bajo nuestros pies: sin resaltado
     }
-    .progreso { margin-left: auto; font-size: 11.5px; color: #9a9aac; }
-    .contenido {
-      flex: 1; overflow-y: auto; padding: 22px 24px 60vh;
-      font-size: 18px; line-height: 1.7; /* tipografía cómoda de lectura */
+  }
+
+  /** Desplaza la página para que el rango quede a la vista. */
+  function autoDesplazar(rango) {
+    let rect;
+    try { rect = rango.getBoundingClientRect(); } catch (e) { return; }
+    if (!rect || (rect.top === 0 && rect.bottom === 0)) return;
+    if (rect.top < 80 || rect.bottom > window.innerHeight - 150) {
+      const cont = rango.startContainer;
+      const el = cont.nodeType === Node.TEXT_NODE ? cont.parentElement : cont;
+      if (el && el.scrollIntoView) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
     }
-    .oracion { cursor: pointer; border-radius: 4px; padding: 1px 2px; }
-    .oracion:hover { background: rgba(124, 92, 255, .14); }
-    .oracion.actual { background: rgba(124, 92, 255, .26); }
-    .palabra.palabra-actual { background: #6c5cff; color: #fff; border-radius: 3px; }
-    .aviso {
-      font-family: system-ui, sans-serif; font-size: 14px; color: #c9c9d6;
-      background: #262633; border: 1px solid #343442; border-radius: 8px;
-      padding: 12px 14px; margin-bottom: 16px;
+  }
+
+  /** Resalta la oración `idx` en su sitio de la página. */
+  function resaltarOracion(idx) {
+    if (!lectura) return;
+    const o = lectura.oraciones[idx];
+    if (!o) return;
+    const rango = crearRango(o.ini, o.fin);
+    if (barra) {
+      barra.progreso.textContent = (idx + 1) + ' / ' + lectura.oraciones.length;
     }
-  `;
+    if (!rango) return;
+    if (soportaHighlight) {
+      hlPalabra.clear();
+      hlOracion.clear();
+      hlOracion.add(rango);
+    } else {
+      // Respaldo para navegadores sin Highlight API: usar la selección.
+      try {
+        const sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(rango);
+        usandoSeleccion = true;
+      } catch (e) { /* nada */ }
+    }
+    autoDesplazar(rango);
+  }
+
+  /** Resalta la palabra que se está pronunciando dentro de la oración. */
+  function resaltarPalabra(idx, charIndex) {
+    if (!soportaHighlight || !lectura) return;
+    const o = lectura.oraciones[idx];
+    if (!o) return;
+    const t = lectura.texto;
+    let p = o.ini + Math.max(0, Math.min(charIndex, o.fin - o.ini - 1));
+    while (p < o.fin && /\s/.test(t[p])) p++; // si cae en un espacio, avanza
+    if (p >= o.fin) return;
+    let a = p;
+    while (a > o.ini && !/\s/.test(t[a - 1])) a--;
+    let b = p;
+    while (b < o.fin && !/\s/.test(t[b])) b++;
+    const rango = crearRango(a, b);
+    if (!rango) return;
+    hlPalabra.clear();
+    hlPalabra.add(rango);
+  }
+
+  // ------------------------------------------------------------------
+  // Barrita flotante de controles
+  // ------------------------------------------------------------------
 
   const VELOCIDADES = [0.5, 0.75, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3, 3.5, 4, 4.5, 5];
 
-  /** Crea el panel lateral y lo rellena con las oraciones. */
-  function crearPanel(titulo, oraciones) {
-    quitarPanel(); // si había uno, fuera
+  const ESTILOS_BARRA = `
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    .barra {
+      display: flex; align-items: center; gap: 7px;
+      background: #1f1f28; color: #e9e9ef;
+      border: 1px solid #343442; border-radius: 999px;
+      padding: 8px 12px;
+      font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+      box-shadow: 0 8px 30px rgba(0,0,0,.45);
+    }
+    .btn {
+      appearance: none; border: 1px solid #343442; background: #262633;
+      color: #e9e9ef; border-radius: 999px; cursor: pointer;
+      font-size: 14px; line-height: 1; padding: 8px 11px;
+    }
+    .btn:hover { background: #32323f; }
+    .btn-principal { background: #6c5cff; border-color: #6c5cff; font-size: 15px; padding: 8px 14px; }
+    .btn-principal:hover { background: #7d6fff; }
+    .btn-principal.atencion { animation: latido 1s infinite; }
+    @keyframes latido { 50% { transform: scale(1.12); } }
+    select {
+      appearance: none; border: 1px solid #343442; background: #262633;
+      color: #e9e9ef; border-radius: 999px; padding: 7px 9px;
+      font-size: 12px; cursor: pointer;
+    }
+    .progreso { font-size: 11.5px; color: #9a9aac; min-width: 52px; text-align: center; }
+    .mensaje { font-size: 11.5px; color: #ffd9a8; max-width: 240px; }
+    .mensaje:empty { display: none; }
+  `;
 
+  function crearBarra() {
+    if (barra) return;
     const host = document.createElement('div');
-    host.id = '__lector-tts-panel';
-    // z-index máximo posible: el panel queda por encima de cualquier página.
+    host.id = '__lector-tts-barra';
     host.style.cssText =
-      'position:fixed;top:0;right:0;width:min(410px,100vw);height:100vh;z-index:2147483647;';
-
+      'position:fixed;left:50%;bottom:18px;transform:translateX(-50%);' +
+      'z-index:2147483647;max-width:calc(100vw - 20px);';
     const shadow = host.attachShadow({ mode: 'open' });
     shadow.innerHTML = `
-      <style>${ESTILOS_PANEL}</style>
-      <div class="panel">
-        <header>
-          <div class="fila titulo-fila">
-            <span>🔊</span>
-            <span class="titulo"></span>
-            <button class="btn btn-cerrar" title="Cerrar y detener">✕</button>
-          </div>
-          <div class="fila">
-            <button class="btn btn-ant" title="Oración anterior">⏮</button>
-            <button class="btn btn-principal btn-pausa" title="Pausar / Reanudar">⏸</button>
-            <button class="btn btn-sig" title="Oración siguiente">⏭</button>
-            <select class="sel-vel" title="Velocidad de lectura"></select>
-            <span class="progreso"></span>
-          </div>
-        </header>
-        <div class="contenido"></div>
+      <style>${ESTILOS_BARRA}</style>
+      <div class="barra">
+        <button class="btn btn-ant" title="Oración anterior">⏮</button>
+        <button class="btn btn-principal btn-pausa" title="Pausar / Reanudar">⏸</button>
+        <button class="btn btn-sig" title="Oración siguiente">⏭</button>
+        <select class="sel-vel" title="Velocidad de lectura"></select>
+        <span class="progreso"></span>
+        <span class="mensaje"></span>
+        <button class="btn btn-cerrar" title="Cerrar y detener">✕</button>
       </div>
     `;
-
-    shadow.querySelector('.titulo').textContent = titulo;
-
-    // Rellenar el texto: una oración = un <span> clicable.
-    const zona = shadow.querySelector('.contenido');
-    oraciones.forEach((oracion, i) => {
-      const span = document.createElement('span');
-      span.className = 'oracion';
-      span.dataset.i = String(i);
-      span.textContent = oracion + ' ';
-      zona.appendChild(span);
-    });
-
-    // Clic en una oración = saltar a ella.
-    zona.addEventListener('click', (ev) => {
-      const span = ev.target && ev.target.closest ? ev.target.closest('.oracion') : null;
-      if (!span) return;
-      const i = Number(span.dataset.i);
-      if (motor.leyendo) motor.saltarA(i);
-      else motor.iniciar(oracionesActuales, i); // lectura terminada: reanudar desde aquí
-    });
-
-    // Botones del panel.
-    shadow.querySelector('.btn-cerrar').addEventListener('click', () => cerrarPanel());
+    shadow.querySelector('.btn-cerrar').addEventListener('click', cerrarLectura);
     shadow.querySelector('.btn-ant').addEventListener('click', () => motor.anterior());
     shadow.querySelector('.btn-sig').addEventListener('click', () => motor.siguiente());
     shadow.querySelector('.btn-pausa').addEventListener('click', () => {
-      if (!motor.leyendo) motor.iniciar(oracionesActuales, 0); // volver a empezar
+      // Este clic es un gesto real del usuario: sirve también para
+      // desbloquear el audio cuando el navegador exige interacción.
+      if (!motor.leyendo && lectura) reanudarDesdeCero();
       else if (motor.enPausa) motor.reanudar();
       else motor.pausar();
     });
-
-    // Selector rápido de velocidad (sincronizado con el popup vía storage).
     const selVel = shadow.querySelector('.sel-vel');
     selVel.addEventListener('change', () => {
       LectorTTS.guardarAjustes({ velocidad: parseFloat(selVel.value) });
     });
 
     (document.documentElement || document.body).appendChild(host);
-
-    panel = {
+    barra = {
       host,
       shadow,
-      zona,
       selVel,
       btnPausa: shadow.querySelector('.btn-pausa'),
-      progreso: shadow.querySelector('.progreso')
+      progreso: shadow.querySelector('.progreso'),
+      mensaje: shadow.querySelector('.mensaje')
     };
-    sincronizarVelocidadPanel();
+    sincronizarVelocidadBarra();
   }
 
-  /** Pone el selector de velocidad del panel en el valor guardado. */
-  function sincronizarVelocidadPanel() {
-    if (!panel) return;
+  function sincronizarVelocidadBarra() {
+    if (!barra) return;
     const vel = Number(motor.ajustes.velocidad) || 1.1;
     const lista = VELOCIDADES.includes(vel)
       ? VELOCIDADES
       : VELOCIDADES.concat(vel).sort((a, b) => a - b);
-    panel.selVel.innerHTML = '';
+    barra.selVel.innerHTML = '';
     for (const v of lista) {
       const op = document.createElement('option');
       op.value = String(v);
       op.textContent = v + '×';
-      panel.selVel.appendChild(op);
+      barra.selVel.appendChild(op);
     }
-    panel.selVel.value = String(vel);
+    barra.selVel.value = String(vel);
   }
 
-  /** Quita el panel del DOM (sin tocar el motor). */
-  function quitarPanel() {
-    if (panel) {
-      panel.host.remove();
-      panel = null;
+  let temporizadorMensaje = null;
+  /** Muestra un texto en la barrita (fijo si `fijo`, si no 8 s). */
+  function mensajeBarra(texto, fijo) {
+    if (!barra) return;
+    barra.mensaje.textContent = texto || '';
+    clearTimeout(temporizadorMensaje);
+    if (texto && !fijo) {
+      temporizadorMensaje = setTimeout(() => {
+        if (barra) barra.mensaje.textContent = '';
+      }, 8000);
     }
   }
 
-  /** Cierra el panel Y detiene la lectura (botón ✕ o mensaje "detener"). */
-  function cerrarPanel() {
-    motor.detener();
-    quitarPanel();
+  function quitarBarra() {
+    if (barra) {
+      barra.host.remove();
+      barra = null;
+    }
   }
 
   // ------------------------------------------------------------------
-  // Resaltado de oración y de palabra
+  // Voces neuronales: iframe oculto de la extensión (tts-frame.html)
   // ------------------------------------------------------------------
 
-  /**
-   * Prepara una oración para el resaltado palabra a palabra: convierte su
-   * texto en <span class="palabra"> con la posición inicial de cada palabra.
-   */
-  function prepararPalabras(span) {
-    if (span.dataset.conPalabras) return;
-    const texto = span.textContent;
-    span.textContent = '';
-    let pos = 0;
-    for (const trozo of texto.split(/(\s+)/)) {
-      if (!trozo) continue;
-      if (/^\s+$/.test(trozo)) {
-        span.appendChild(document.createTextNode(trozo));
-      } else {
-        const w = document.createElement('span');
-        w.className = 'palabra';
-        w.dataset.ini = String(pos);
-        w.textContent = trozo;
-        span.appendChild(w);
-      }
-      pos += trozo.length;
-    }
-    span.dataset.conPalabras = '1';
-  }
+  let promesaFrame = null;
 
-  /** Resalta la oración i y hace auto-scroll hasta ella. */
-  function resaltarOracion(i) {
-    if (!panel) return;
-    const previa = panel.shadow.querySelector('.oracion.actual');
-    if (previa) {
-      previa.classList.remove('actual');
-      const palabraVieja = previa.querySelector('.palabra-actual');
-      if (palabraVieja) palabraVieja.classList.remove('palabra-actual');
-    }
-    const span = panel.shadow.querySelector(`.oracion[data-i="${i}"]`);
-    if (!span) return;
-    span.classList.add('actual');
-    prepararPalabras(span);
-    span.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    panel.progreso.textContent = (i + 1) + ' / ' + oracionesActuales.length;
-  }
-
-  /** Resalta la palabra que se está pronunciando (si la voz emite eventos). */
-  function resaltarPalabra(i, charIndex) {
-    if (!panel) return;
-    const span = panel.shadow.querySelector(`.oracion[data-i="${i}"]`);
-    if (!span || !span.dataset.conPalabras) return;
-    let objetivo = null;
-    span.querySelectorAll('.palabra').forEach((w) => {
-      if (Number(w.dataset.ini) <= charIndex) objetivo = w;
+  /** Crea (una sola vez) el iframe que aloja el motor neuronal. */
+  function asegurarFrame() {
+    if (promesaFrame) return promesaFrame;
+    promesaFrame = new Promise((resolver, rechazar) => {
+      const frame = document.createElement('iframe');
+      frame.id = '__lector-tts-frame';
+      frame.src = chrome.runtime.getURL('tts-frame.html');
+      frame.style.cssText = 'display:none;width:0;height:0;border:0;';
+      const temporizador = setTimeout(() => {
+        rechazar(new Error('el motor neuronal tardó demasiado en cargar'));
+      }, 20000);
+      frame.addEventListener('load', () => {
+        clearTimeout(temporizador);
+        resolver(frame);
+      });
+      frame.addEventListener('error', () => {
+        clearTimeout(temporizador);
+        rechazar(new Error('no se pudo cargar el motor neuronal'));
+      });
+      (document.documentElement || document.body).appendChild(frame);
     });
-    const previa = span.querySelector('.palabra-actual');
-    if (previa && previa !== objetivo) previa.classList.remove('palabra-actual');
-    if (objetivo) objetivo.classList.add('palabra-actual');
+    return promesaFrame;
   }
 
-  // Conectar el motor con el panel.
+  // Enchufar la síntesis neuronal al motor: se pide al iframe por
+  // MessageChannel y responde con el WAV (o el progreso de descarga).
+  motor.sintetizarNeural = function (texto, idVoz, alProgreso) {
+    return asegurarFrame().then((frame) => new Promise((resolver, rechazar) => {
+      const canal = new MessageChannel();
+      canal.port1.onmessage = (ev) => {
+        const d = ev.data || {};
+        if (d.tipo === 'progreso') {
+          if (alProgreso) alProgreso({ cargado: d.cargado, total: d.total });
+        } else if (d.tipo === 'audio') {
+          canal.port1.close();
+          resolver(new Blob([d.datos], { type: 'audio/wav' }));
+        } else if (d.tipo === 'error') {
+          canal.port1.close();
+          rechazar(new Error(d.error || 'fallo en la síntesis'));
+        }
+      };
+      frame.contentWindow.postMessage(
+        { lectorTTS: true, tipo: 'sintetizar', texto, voz: idVoz },
+        '*',
+        [canal.port2]
+      );
+    }));
+  };
+
+  // ------------------------------------------------------------------
+  // Conexión del motor con la interfaz
+  // ------------------------------------------------------------------
+
   motor.alEmpezarOracion = resaltarOracion;
   motor.alPalabra = resaltarPalabra;
   motor.alCambiarEstado = (estado) => {
-    if (!panel) return;
-    panel.btnPausa.textContent = estado.leyendo && !estado.enPausa ? '⏸' : '▶';
+    if (!barra) return;
+    barra.btnPausa.textContent = estado.leyendo && !estado.enPausa ? '⏸' : '▶';
+    if (!estado.enPausa) barra.btnPausa.classList.remove('atencion');
   };
   motor.alTerminar = () => {
-    if (!panel) return;
-    const actual = panel.shadow.querySelector('.oracion.actual');
-    if (actual) actual.classList.remove('actual');
-    panel.progreso.textContent = 'Fin ✓';
+    limpiarResaltado();
+    if (barra) {
+      barra.progreso.textContent = 'Fin ✓';
+      barra.btnPausa.textContent = '▶';
+    }
   };
+  motor.alProgresoDescarga = (pct) => {
+    if (pct === null) mensajeBarra('');
+    else mensajeBarra('Descargando voz neuronal… ' + pct + '% (solo la primera vez)', true);
+  };
+  motor.alBloqueoAudio = () => {
+    if (!barra) return;
+    barra.btnPausa.classList.add('atencion');
+    mensajeBarra('Pulsa ▶ para escuchar (el navegador pide un clic)', true);
+  };
+  motor.alAviso = (texto) => mensajeBarra(texto);
 
   // ------------------------------------------------------------------
-  // Arranque de una lectura
+  // Arranque y control de lecturas
   // ------------------------------------------------------------------
 
-  /** Trocea el texto, monta el panel y empieza a leer. Devuelve false si no hay texto. */
-  function empezarLectura(titulo, texto) {
-    const oraciones = LectorTTS.trocearEnOraciones(texto);
-    if (!oraciones.length) return false;
-    oracionesActuales = oraciones;
-    crearPanel(titulo, oraciones);
-    motor.iniciar(oraciones, 0);
+  /** Prepara y arranca la lectura a partir de una recolección. */
+  function iniciarLectura(rec) {
+    const rangos = LectorTTS.trocearRangos(rec.texto, rec.cortes)
+      .filter((r) => rec.texto.slice(r.ini, r.fin).trim());
+    if (!rangos.length) return false;
+    limpiarResaltado();
+    lectura = { texto: rec.texto, mapa: rec.mapa, oraciones: rangos };
+    prepararResaltado();
+    crearBarra();
+    mensajeBarra('');
+    motor.iniciar(rangos.map((r) => rec.texto.slice(r.ini, r.fin)), 0);
     return true;
   }
 
-  /** Lee el artículo principal de la página (o todo el body como plan B). */
-  function empezarLecturaPagina() {
-    const { titulo, texto } = extraerArticulo();
-    return empezarLectura(titulo, texto);
+  /** Lee el contenido principal de la página, resaltando en el sitio. */
+  function leerPagina() {
+    const raiz = elegirRaiz();
+    const rec = recolectar(raiz, null, true);
+    return iniciarLectura(rec);
   }
 
   /** Lee la selección actual; si no hay, lee la página entera. */
-  function empezarLecturaSeleccion(textoRespaldo) {
-    const seleccion = (window.getSelection ? String(window.getSelection()) : '').trim()
-      || String(textoRespaldo || '').trim();
-    if (seleccion) return empezarLectura('Selección', seleccion);
-    return empezarLecturaPagina();
+  function leerSeleccion(textoRespaldo) {
+    const sel = window.getSelection();
+    if (sel && sel.rangeCount && !sel.isCollapsed) {
+      const rango = sel.getRangeAt(0).cloneRange();
+      const comun = rango.commonAncestorContainer;
+      const raiz = comun.nodeType === Node.ELEMENT_NODE ? comun : comun.parentElement;
+      if (raiz) {
+        const rec = recolectar(raiz, rango, false);
+        if (rec.texto.trim()) {
+          // La selección desaparece al resaltar: la soltamos nosotros antes.
+          try { sel.removeAllRanges(); } catch (e) { /* nada */ }
+          return iniciarLectura(rec);
+        }
+      }
+    }
+    // Sin selección viva pero con texto de respaldo (menú contextual):
+    // se lee sin resaltado, con la barrita como único indicador.
+    const respaldo = String(textoRespaldo || '').trim();
+    if (respaldo) {
+      const rangos = LectorTTS.trocearRangos(respaldo, []);
+      if (!rangos.length) return false;
+      limpiarResaltado();
+      lectura = { texto: respaldo, mapa: [], oraciones: rangos };
+      crearBarra();
+      motor.iniciar(rangos.map((r) => respaldo.slice(r.ini, r.fin)), 0);
+      return true;
+    }
+    return leerPagina();
   }
+
+  /** Tras un "Fin ✓", el botón ▶ vuelve a empezar desde arriba. */
+  function reanudarDesdeCero() {
+    if (!lectura) return;
+    prepararResaltado();
+    motor.iniciar(
+      lectura.oraciones.map((r) => lectura.texto.slice(r.ini, r.fin)),
+      0
+    );
+  }
+
+  /** Cierra la barrita, apaga el resaltado y detiene la voz. */
+  function cerrarLectura() {
+    motor.detener();
+    limpiarResaltado();
+    quitarBarra();
+    lectura = null;
+  }
+
+  // Clic en una oración resaltable = saltar a ella (solo mientras se lee).
+  document.addEventListener('click', (ev) => {
+    if (!lectura || !motor.leyendo || !lectura.mapa.length) return;
+    if (ev.target && ev.target.id && String(ev.target.id).startsWith('__lector-tts')) return;
+    // ¿Dónde cayó el clic dentro del texto total?
+    let posicion = null;
+    const cr = document.caretRangeFromPoint
+      ? document.caretRangeFromPoint(ev.clientX, ev.clientY)
+      : null;
+    let nodoClic = null;
+    let offsetClic = 0;
+    if (cr) {
+      nodoClic = cr.startContainer;
+      offsetClic = cr.startOffset;
+    } else if (document.caretPositionFromPoint) {
+      const cp = document.caretPositionFromPoint(ev.clientX, ev.clientY);
+      if (cp) { nodoClic = cp.offsetNode; offsetClic = cp.offset; }
+    }
+    if (!nodoClic || nodoClic.nodeType !== Node.TEXT_NODE) return;
+    for (const seg of lectura.mapa) {
+      if (seg.nodo === nodoClic && offsetClic >= seg.desde && offsetClic <= seg.hasta) {
+        posicion = seg.ini + (offsetClic - seg.desde);
+        break;
+      }
+    }
+    if (posicion === null) return;
+    const idx = lectura.oraciones.findIndex((o) => posicion >= o.ini && posicion < o.fin);
+    if (idx >= 0) motor.saltarA(idx);
+  }, true);
 
   // ------------------------------------------------------------------
   // Mensajes del popup y del background
@@ -350,21 +612,18 @@
     let ok = true;
     switch (mensaje && mensaje.accion) {
       case 'leer-pagina':
-        ok = empezarLecturaPagina();
+        ok = leerPagina();
         break;
       case 'leer-seleccion':
-        ok = empezarLecturaSeleccion(mensaje.textoRespaldo);
+        ok = leerSeleccion(mensaje.textoRespaldo);
         break;
       case 'pausa-reanudar':
         if (motor.enPausa) motor.reanudar();
         else if (motor.leyendo) motor.pausar();
-        else if (oracionesActuales.length) { // no sonaba nada: retomar desde el último punto
-          crearPanelSiFalta();
-          motor.iniciar(oracionesActuales, 0);
-        }
+        else if (lectura) reanudarDesdeCero();
         break;
       case 'detener':
-        cerrarPanel();
+        cerrarLectura();
         break;
       case 'siguiente':
         motor.siguiente();
@@ -385,11 +644,4 @@
     });
     return false; // respuesta síncrona
   });
-
-  /** Si el panel se cerró pero queda texto cargado, lo vuelve a montar. */
-  function crearPanelSiFalta() {
-    if (!panel && oracionesActuales.length) {
-      crearPanel(document.title || 'Página', oracionesActuales);
-    }
-  }
 })();

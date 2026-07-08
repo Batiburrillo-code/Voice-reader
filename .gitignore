@@ -7,3 +7,6 @@ Desktop.ini
 *.zip
 *.xpi
 web-ext-artifacts/
+
+# Configuración local de herramientas de desarrollo
+.claude/

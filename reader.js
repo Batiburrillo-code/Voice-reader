@@ -8,11 +8,16 @@
  *   2. Descarga el PDF con fetch y extrae el texto con pdf.js de Mozilla
  *      (empaquetada en libs/, sin CDN: la CSP de Manifest V3 prohíbe scripts remotos).
  *   3. Lee el texto con el MISMO motor de speech-engine.js que usan las
- *      páginas web, con resaltado por oración y palabra.
+ *      páginas web, con resaltado por oración y palabra a palabra.
+ *
+ * Al ser una página de la extensión, las voces neuronales Piper se
+ * sintetizan aquí mismo (sin iframe intermedio).
  */
 
 // pdf.js v4 se distribuye como módulo ES; por eso este script es type="module".
 import * as pdfjsLib from './libs/pdf.mjs';
+// Motor neuronal Piper (parcheado para cargar su WASM desde libs/neural/).
+import * as vits from './libs/neural/vits-web.js';
 
 // El "worker" de pdf.js debe cargarse desde DENTRO de la extensión.
 pdfjsLib.GlobalWorkerOptions.workerSrc = chrome.runtime.getURL('libs/pdf.worker.mjs');
@@ -34,6 +39,12 @@ const txtVel = document.getElementById('txt-vel');
 // Motor de lectura compartido (speech-engine.js ya se cargó como script clásico).
 const motor = LectorTTS.crearMotorLectura();
 let oracionesActuales = [];
+
+// Enchufar la síntesis neuronal directamente (esta página ya puede con WASM).
+motor.sintetizarNeural = (texto, idVoz, alProgreso) =>
+  vits.predict({ text: String(texto || ' '), voiceId: idVoz }, (p) => {
+    if (alProgreso) alProgreso({ cargado: p.loaded || 0, total: p.total || 0 });
+  });
 
 // ---- Mensajes de estado ----------------------------------------------------
 
@@ -60,40 +71,53 @@ LectorTTS.cargarAjustes((ajustes) => {
 
 chrome.storage.onChanged.addListener((cambios, area) => {
   if (area !== 'sync') return;
-  let cambiado = false;
-  for (const clave of ['vozNombre', 'velocidad', 'tono']) {
-    if (clave in cambios) {
-      motor.ajustes[clave] = cambios[clave].newValue;
-      cambiado = true;
-    }
+  if ('velocidad' in cambios) {
+    motor.fijarVelocidad(cambios.velocidad.newValue);
+    rangoVel.value = String(cambios.velocidad.newValue);
+    txtVel.textContent = Number(cambios.velocidad.newValue).toFixed(1) + '×';
   }
-  if (!cambiado) return;
-  rangoVel.value = String(motor.ajustes.velocidad);
-  txtVel.textContent = Number(motor.ajustes.velocidad).toFixed(1) + '×';
-  if (motor.leyendo && !motor.enPausa) motor.saltarA(motor.indice);
+  if ('tono' in cambios) motor.fijarTono(cambios.tono.newValue);
+  if ('vozNombre' in cambios) {
+    motor.fijarVoz(cambios.vozNombre.newValue);
+    selVoz.value = cambios.vozNombre.newValue || '';
+  }
 });
 
-// ---- Selector de voz (español primero) --------------------------------------
+// ---- Selector de voz (neuronales y español primero) --------------------------
 
 function poblarVoces() {
   const voces = LectorTTS.refrescarVoces();
-  if (!voces.length) return; // llegarán con voiceschanged
-  const esEspanola = (v) => v.lang && v.lang.toLowerCase().startsWith('es');
-  const orden = (a, b) => a.lang.localeCompare(b.lang) || a.name.localeCompare(b.name);
-  const espanolas = voces.filter(esEspanola).sort(orden);
-  const otras = voces.filter((v) => !esEspanola(v)).sort(orden);
-
   selVoz.innerHTML = '';
+
   const auto = document.createElement('option');
   auto.value = '';
   auto.textContent = '✨ Automática (español)';
   selVoz.appendChild(auto);
-  for (const voz of espanolas.concat(otras)) {
+
+  // Voces neuronales Piper (mejor calidad; se descargan la primera vez).
+  const grupoNeural = document.createElement('optgroup');
+  grupoNeural.label = '🌟 Neuronales (descarga única)';
+  for (const voz of LectorTTS.VOCES_NEURALES) {
+    const op = document.createElement('option');
+    op.value = voz.id;
+    op.textContent = voz.etiqueta;
+    grupoNeural.appendChild(op);
+  }
+  selVoz.appendChild(grupoNeural);
+
+  // Voces del sistema, con las de español primero.
+  const esEspanola = (v) => v.lang && v.lang.toLowerCase().startsWith('es');
+  const orden = (a, b) => a.lang.localeCompare(b.lang) || a.name.localeCompare(b.name);
+  const grupoSistema = document.createElement('optgroup');
+  grupoSistema.label = 'Voces del sistema';
+  for (const voz of voces.filter(esEspanola).sort(orden).concat(voces.filter((v) => !esEspanola(v)).sort(orden))) {
     const op = document.createElement('option');
     op.value = voz.name;
     op.textContent = voz.name + ' (' + voz.lang + ')';
-    selVoz.appendChild(op);
+    grupoSistema.appendChild(op);
   }
+  if (grupoSistema.children.length) selVoz.appendChild(grupoSistema);
+
   selVoz.value = motor.ajustes.vozNombre || '';
   if (selVoz.value !== (motor.ajustes.vozNombre || '')) selVoz.value = '';
 }
@@ -106,6 +130,7 @@ selVoz.addEventListener('change', () => {
 let temporizadorVel = null;
 rangoVel.addEventListener('input', () => {
   txtVel.textContent = Number(rangoVel.value).toFixed(1) + '×';
+  motor.fijarVelocidad(parseFloat(rangoVel.value)); // efecto inmediato
   clearTimeout(temporizadorVel);
   temporizadorVel = setTimeout(() => {
     LectorTTS.guardarAjustes({ velocidad: parseFloat(rangoVel.value) });
@@ -115,6 +140,7 @@ rangoVel.addEventListener('input', () => {
 // ---- Botones de transporte ---------------------------------------------------
 
 btnPausa.addEventListener('click', () => {
+  // Un clic real: también desbloquea el audio si el navegador lo exigía.
   if (!motor.leyendo && oracionesActuales.length) motor.iniciar(oracionesActuales, 0);
   else if (motor.enPausa) motor.reanudar();
   else motor.pausar();
@@ -134,7 +160,7 @@ inputArchivo.addEventListener('change', async () => {
   }
 });
 
-// ---- Resaltado (igual que en el panel de content.js) --------------------------
+// ---- Resaltado por oración y palabra -------------------------------------------
 
 function prepararPalabras(span) {
   if (span.dataset.conPalabras) return;
@@ -193,6 +219,16 @@ motor.alTerminar = () => {
   if (actual) actual.classList.remove('actual');
   elProgreso.textContent = 'Fin ✓';
 };
+
+// Avisos del motor (descarga de voz, autoplay bloqueado, fallos).
+motor.alProgresoDescarga = (pct) => {
+  if (pct === null) ocultarEstado();
+  else estado('Descargando la voz neuronal… ' + pct + '% (solo la primera vez; luego funciona sin conexión)');
+};
+motor.alBloqueoAudio = () => {
+  estado('El navegador pide un clic para reproducir sonido: pulsa ▶ arriba.', false);
+};
+motor.alAviso = (texto) => estado(texto, true);
 
 // ---- Carga y lectura del PDF ---------------------------------------------------
 

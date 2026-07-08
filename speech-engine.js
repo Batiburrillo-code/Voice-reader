@@ -1,25 +1,23 @@
 /**
  * speech-engine.js — Motor de lectura compartido de "Lector TTS".
  *
- * Este archivo se carga en dos sitios:
- *   - Como content script en todas las páginas web (antes que content.js).
- *   - En las páginas de la extensión (reader.html para PDFs).
+ * Se carga como content script en todas las páginas web y en las páginas de
+ * la extensión (reader.html). Expone el objeto global `LectorTTS`.
  *
- * Expone el objeto global `LectorTTS` con:
- *   - trocearEnOraciones(texto): divide un texto en oraciones "hablables".
- *   - elegirVoz(nombre): elige voz (guardada → primera en español → por defecto).
- *   - obtenerVoces() / refrescarVoces(): lista de voces disponibles.
- *   - cargarAjustes(cb) / guardarAjustes(obj): preferencias en chrome.storage.sync.
- *   - crearMotorLectura(): crea el motor que encadena oración a oración.
+ * Desde la v1.1 el motor tiene DOS formas de generar voz:
+ *   1. Voces del sistema (Web Speech API / speechSynthesis) — sin descargas.
+ *   2. Voces neuronales Piper (vozNombre = "piper:<id>") — mejor calidad,
+ *      100% locales tras una descarga inicial. La síntesis la hace quien usa
+ *      el motor a través del "enchufe" motor.sintetizarNeural (content.js la
+ *      delega a un iframe de la extensión; reader.js la hace directamente).
  *
- * Toda la síntesis usa la Web Speech API (speechSynthesis), que es local y
- * gratuita. NUNCA se llama desde el background (allí no existe).
+ * El motor habla UNA oración por utterance/audio y encadena la siguiente al
+ * terminar: así se esquiva el corte de utterances largas de Chrome y se puede
+ * resaltar y saltar por oración. NUNCA se usa desde el background.
  */
 (function (global) {
   'use strict';
 
-  // En content scripts y páginas de extensión `speechSynthesis` existe.
-  // En Node (pruebas) no, por eso el "|| null".
   const sintesis = global.speechSynthesis || null;
 
   // ------------------------------------------------------------------
@@ -27,86 +25,150 @@
   // ------------------------------------------------------------------
   const AJUSTES_DEFECTO = { vozNombre: '', velocidad: 1.1, tono: 1.0 };
 
-  // Límites del troceo. Oraciones muy cortas (abreviaturas como "Sr.") se unen
-  // a la siguiente; las muy largas se parten para esquivar el bug de Chrome
-  // que enmudece las utterances largas (~15 s con voces online).
+  // Límites del troceo (ver trocearRangos).
   const MIN_ORACION = 60;
   const MAX_ORACION = 250;
 
+  // Velocidad de habla estimada, para mover el resaltado de palabra cuando la
+  // voz no emite eventos de posición (~16 caracteres por segundo en español).
+  const CARACTERES_POR_SEGUNDO = 16;
+
+  // Voces neuronales Piper disponibles (se descargan de Hugging Face la
+  // primera vez y quedan guardadas en el navegador; después van sin conexión).
+  const VOCES_NEURALES = [
+    { id: 'piper:es_MX-claude-high',        etiqueta: 'Claude · Español (México) · calidad alta' },
+    { id: 'piper:es_MX-ald-medium',         etiqueta: 'Ald · Español (México) · calidad media' },
+    { id: 'piper:es_ES-davefx-medium',      etiqueta: 'Davefx · Español (España) · calidad media' },
+    { id: 'piper:es_ES-sharvard-medium',    etiqueta: 'Sharvard · Español (España) · calidad media' },
+    { id: 'piper:es_ES-mls_10246-low',      etiqueta: 'MLS 10246 · Español (España) · ligera' },
+    { id: 'piper:es_ES-mls_9972-low',       etiqueta: 'MLS 9972 · Español (España) · ligera' },
+    { id: 'piper:es_ES-carlfm-x_low',       etiqueta: 'Carlfm · Español (España) · muy ligera' },
+    { id: 'piper:en_US-hfc_female-medium',  etiqueta: 'HFC Female · Inglés (EE. UU.) · media' }
+  ];
+
+  /** ¿Es un nombre de voz neuronal ("piper:...")? */
+  function esVozNeural(nombre) {
+    return typeof nombre === 'string' && nombre.startsWith('piper:');
+  }
+
+  /** Saca el id Piper de un nombre "piper:es_ES-davefx-medium". */
+  function idPiper(nombre) {
+    return String(nombre).slice('piper:'.length);
+  }
+
   // ------------------------------------------------------------------
-  // Troceo del texto en oraciones
+  // Troceo del texto en oraciones (por rangos de posiciones)
   // ------------------------------------------------------------------
 
   /**
-   * Divide un texto en oraciones listas para hablar una a una.
-   * Reglas: se corta tras . ! ? … (con comillas/paréntesis de cierre),
-   * los trozos de menos de 60 caracteres se pegan al siguiente y los de
-   * más de 250 se parten por comas o espacios.
+   * Divide `texto` en oraciones y devuelve RANGOS [{ini, fin}] con posiciones
+   * dentro del propio texto (así el resaltado sabe exactamente dónde está
+   * cada oración en la página). `cortes` es una lista opcional de posiciones
+   * que no se pueden cruzar (límites de párrafo/título en la página).
+   *
+   * Reglas: se corta tras . ! ? … ; los trozos de menos de 60 caracteres se
+   * unen al siguiente (abreviaturas tipo "Sr.") y los de más de 250 se parten
+   * por comas o espacios, para esquivar el bug de Chrome que enmudece las
+   * utterances largas.
    */
-  function trocearEnOraciones(texto) {
-    const limpio = String(texto || '').replace(/\s+/g, ' ').trim();
-    if (!limpio) return [];
+  function trocearRangos(texto, cortes) {
+    const total = String(texto || '').length;
+    if (!total) return [];
+    const posiciones = [0];
+    for (const c of (cortes || [])) {
+      if (c > 0 && c < total) posiciones.push(c);
+    }
+    posiciones.push(total);
+    const unicas = Array.from(new Set(posiciones)).sort((a, b) => a - b);
+
+    const rangos = [];
+    for (let b = 0; b < unicas.length - 1; b++) {
+      trocearBloque(texto, unicas[b], unicas[b + 1], rangos);
+    }
+    return rangos;
+  }
+
+  /** Trocea un bloque [ini, fin) del texto y añade los rangos a `destino`. */
+  function trocearBloque(texto, ini, fin, destino) {
+    const trozo = texto.slice(ini, fin);
+    if (!trozo.trim()) return;
 
     // Trozos "brutos": todo lo que acaba en puntuación final (más posibles
     // comillas o paréntesis de cierre) o el resto final sin puntuación.
-    const brutas = limpio.match(/[^.!?…]+[.!?…]+["'»”’)\]]*\s*|[^.!?…]+$/g) || [limpio];
+    const re = /[^.!?…]+[.!?…]+["'»”’)\]]*\s*|[^.!?…]+$/g;
+    const brutos = [];
+    let m;
+    while ((m = re.exec(trozo)) !== null) {
+      brutos.push({ ini: ini + m.index, fin: ini + m.index + m[0].length });
+    }
+    if (!brutos.length) brutos.push({ ini, fin });
 
     // Unir fragmentos demasiado cortos (p. ej. "El Sr." + "Pérez llegó.").
-    const unidas = [];
-    let actual = '';
-    for (const trozo of brutas) {
-      actual += trozo;
-      if (actual.trim().length >= MIN_ORACION) {
-        unidas.push(actual.trim());
-        actual = '';
+    const unidos = [];
+    let actual = null;
+    for (const r of brutos) {
+      if (!actual) actual = { ini: r.ini, fin: r.fin };
+      else actual.fin = r.fin;
+      if (texto.slice(actual.ini, actual.fin).trim().length >= MIN_ORACION) {
+        unidos.push(actual);
+        actual = null;
       }
     }
-    const resto = actual.trim();
-    if (resto) {
+    if (actual && texto.slice(actual.ini, actual.fin).trim()) {
       // Un final corto se pega a la última oración para no dejar "migas".
-      if (unidas.length && resto.length < MIN_ORACION) {
-        unidas[unidas.length - 1] += ' ' + resto;
+      if (unidos.length && texto.slice(actual.ini, actual.fin).trim().length < MIN_ORACION) {
+        unidos[unidos.length - 1].fin = actual.fin;
       } else {
-        unidas.push(resto);
+        unidos.push(actual);
       }
     }
 
     // Partir las oraciones demasiado largas.
-    const finales = [];
-    for (const oracion of unidas) partirLarga(oracion, finales);
-    return finales;
+    for (const r of unidos) partirRango(texto, r.ini, r.fin, destino);
   }
 
-  /** Parte recursivamente una oración larga por la coma/espacio más cómodo. */
-  function partirLarga(oracion, destino) {
-    if (!oracion) return;
-    if (oracion.length <= MAX_ORACION) {
-      destino.push(oracion);
+  /** Parte recursivamente un rango largo por la coma/espacio más cómodo. */
+  function partirRango(texto, ini, fin, destino) {
+    if (fin <= ini) return;
+    if (fin - ini <= MAX_ORACION) {
+      if (texto.slice(ini, fin).trim()) destino.push({ ini, fin });
       return;
     }
-    const zona = oracion.slice(0, MAX_ORACION);
+    const zona = texto.slice(ini, ini + MAX_ORACION);
     // Preferimos cortar en una pausa natural (coma, punto y coma, dos puntos).
     let corte = Math.max(
       zona.lastIndexOf(', '),
       zona.lastIndexOf('; '),
       zona.lastIndexOf(': ')
     );
-    // Si no hay pausa razonable, cortamos en el último espacio.
-    if (corte < 40) corte = zona.lastIndexOf(' ');
+    // Si no hay pausa razonable, cortamos en el último espacio o salto.
+    if (corte < 40) corte = Math.max(zona.lastIndexOf(' '), zona.lastIndexOf('\n'));
     // Texto sin espacios (URLs, etc.): corte duro.
     if (corte < 40) corte = MAX_ORACION - 1;
 
-    destino.push(oracion.slice(0, corte + 1).trim());
-    partirLarga(oracion.slice(corte + 1).trim(), destino);
+    destino.push({ ini, fin: ini + corte + 1 });
+    partirRango(texto, ini + corte + 1, fin, destino);
+  }
+
+  /**
+   * Versión clásica: devuelve las oraciones como TEXTOS ya normalizados.
+   * La usa el lector de PDF (que pinta su propio texto) y las pruebas.
+   */
+  function trocearEnOraciones(texto) {
+    const limpio = String(texto || '').replace(/\s+/g, ' ').trim();
+    if (!limpio) return [];
+    return trocearRangos(limpio, [])
+      .map((r) => limpio.slice(r.ini, r.fin).trim())
+      .filter(Boolean);
   }
 
   // ------------------------------------------------------------------
-  // Voces
+  // Voces del sistema
   // ------------------------------------------------------------------
 
   let vocesCache = [];
 
-  /** Vuelve a pedir la lista de voces al navegador. */
+  /** Vuelve a pedir la lista de voces del sistema al navegador. */
   function refrescarVoces() {
     if (sintesis) vocesCache = sintesis.getVoices() || [];
     return vocesCache;
@@ -119,22 +181,22 @@
   }
   refrescarVoces();
 
-  /** Lista de voces (refresca si aún está vacía). */
+  /** Lista de voces del sistema (refresca si aún está vacía). */
   function obtenerVoces() {
     if (!vocesCache.length) refrescarVoces();
     return vocesCache;
   }
 
   /**
-   * Elige la voz a usar:
-   *   1. La voz guardada por el usuario (si sigue instalada).
+   * Elige la voz del sistema a usar:
+   *   1. La voz guardada por el usuario (si sigue instalada y no es neuronal).
    *   2. La primera voz en español (lang que empiece por "es").
    *   3. null → se usará la voz por defecto, pero con lang "es-ES" pedido,
    *      para no leer nunca español con una voz en inglés.
    */
   function elegirVoz(nombreGuardado) {
     const voces = obtenerVoces();
-    if (nombreGuardado) {
+    if (nombreGuardado && !esVozNeural(nombreGuardado)) {
       const guardada = voces.find((v) => v.name === nombreGuardado);
       if (guardada) return guardada;
     }
@@ -153,7 +215,6 @@
         callback(Object.assign({}, AJUSTES_DEFECTO, res || {}));
       });
     } catch (e) {
-      // Fuera de una extensión (pruebas): devolvemos los defectos.
       callback(Object.assign({}, AJUSTES_DEFECTO));
     }
   }
@@ -170,15 +231,15 @@
   // ------------------------------------------------------------------
 
   /**
-   * Crea un motor de lectura. El motor habla UNA oración por utterance y
-   * encadena la siguiente en onend. Así se esquiva el corte de utterances
-   * largas de Chrome y se puede resaltar y saltar por oración.
-   *
-   * Callbacks que puede definir quien lo use:
-   *   motor.alEmpezarOracion(i)          → para resaltar la oración i.
-   *   motor.alPalabra(i, charIndex)      → resaltado palabra a palabra (si la voz lo soporta).
-   *   motor.alTerminar()                 → se acabó el texto.
-   *   motor.alCambiarEstado(estado)      → para refrescar botones.
+   * Crea un motor de lectura. Callbacks que puede definir quien lo use:
+   *   motor.alEmpezarOracion(i)       → resaltar la oración i.
+   *   motor.alPalabra(i, charIndex)   → resaltar la palabra en esa posición.
+   *   motor.alTerminar()              → se acabó el texto.
+   *   motor.alCambiarEstado(estado)   → refrescar botones.
+   *   motor.alProgresoDescarga(pct)   → % de descarga de una voz neuronal.
+   *   motor.alBloqueoAudio()          → el navegador exige un clic para sonar.
+   *   motor.alAviso(texto)            → avisos (p. ej. fallo de voz neuronal).
+   *   motor.sintetizarNeural(texto, idVoz, alProgreso) → Promise<Blob WAV>.
    */
   function crearMotorLectura() {
     const motor = {
@@ -191,11 +252,20 @@
       alPalabra: null,
       alTerminar: null,
       alCambiarEstado: null,
-      // "turno" invalida los callbacks de utterances viejas tras un cancel().
+      alProgresoDescarga: null,
+      alBloqueoAudio: null,
+      alAviso: null,
+      sintetizarNeural: null,
+      // "turno" invalida los callbacks de utterances/audios viejos.
       _turno: 0,
       // Referencia viva a la utterance: si no, el recolector de basura de
       // Chrome puede matarla a mitad de frase y la lectura se corta.
-      _utter: null
+      _utter: null,
+      _audio: null,          // <audio> en curso (voz neuronal)
+      _urlAudio: null,       // blob URL a liberar
+      _timerPalabra: null,   // temporizador del resaltado de palabra
+      _cacheAudio: new Map(),// audios ya sintetizados ("voz|indice" → Promise<Blob>)
+      _neuralRota: false     // la voz neuronal falló: usar el sistema
     };
 
     function notificar() {
@@ -211,32 +281,74 @@
       };
     };
 
-    /** Fin natural de la lectura (o parada por quedarse sin oraciones). */
+    /** ¿Toca usar la voz neuronal? */
+    function usaNeural() {
+      return esVozNeural(motor.ajustes.vozNombre) &&
+        typeof motor.sintetizarNeural === 'function' &&
+        !motor._neuralRota;
+    }
+
+    /** Detiene y libera el audio neuronal y el temporizador de palabra. */
+    function limpiarAudio() {
+      if (motor._timerPalabra) {
+        clearInterval(motor._timerPalabra);
+        motor._timerPalabra = null;
+      }
+      if (motor._audio) {
+        try { motor._audio.pause(); } catch (e) { /* nada */ }
+        motor._audio.onended = null;
+        motor._audio.onerror = null;
+        motor._audio = null;
+      }
+      if (motor._urlAudio) {
+        try { URL.revokeObjectURL(motor._urlAudio); } catch (e) { /* nada */ }
+        motor._urlAudio = null;
+      }
+    }
+
+    /** Fin natural de la lectura. */
     function terminar() {
       motor._turno++;
       motor.leyendo = false;
       motor.enPausa = false;
-      try { sintesis.cancel(); } catch (e) { /* sin síntesis */ }
+      limpiarAudio();
+      if (sintesis) { try { sintesis.cancel(); } catch (e) { /* nada */ } }
       if (motor.alTerminar) motor.alTerminar();
       notificar();
     }
 
-    /** Habla la oración i con los ajustes ACTUALES (voz/velocidad/tono). */
+    /** Habla la oración i con los ajustes ACTUALES. */
     function hablar(i) {
-      if (!sintesis) return;
       if (i < 0 || i >= motor.oraciones.length) { terminar(); return; }
-
       motor.indice = i;
       const turno = ++motor._turno;
 
-      // cancel() SIEMPRE antes de hablar: una cola atascada deja speak() mudo.
-      sintesis.cancel();
-      // Si el motor quedó "pausado" tras un cancel (bug de Chromium), despegarlo.
-      if (sintesis.paused) {
-        try { sintesis.resume(); } catch (e) { /* nada */ }
+      limpiarAudio();
+      if (sintesis) {
+        // cancel() SIEMPRE antes de hablar: una cola atascada deja speak() mudo.
+        sintesis.cancel();
+        // Si el motor quedó "pausado" tras un cancel (bug de Chromium), despegarlo.
+        if (sintesis.paused) { try { sintesis.resume(); } catch (e) { /* nada */ } }
       }
 
-      const u = new SpeechSynthesisUtterance(motor.oraciones[i]);
+      if (motor.alEmpezarOracion) motor.alEmpezarOracion(i);
+      if (usaNeural()) hablarNeural(i, turno);
+      else hablarSistema(i, turno);
+      notificar();
+    }
+
+    function avanzar() {
+      if (!motor.leyendo) return;
+      if (motor.indice + 1 < motor.oraciones.length) hablar(motor.indice + 1);
+      else terminar();
+    }
+
+    // ---------- Camino 1: voces del sistema (Web Speech API) ----------
+
+    function hablarSistema(i, turno) {
+      if (!sintesis) { terminar(); return; }
+      const texto = motor.oraciones[i];
+      const u = new SpeechSynthesisUtterance(texto);
       const voz = elegirVoz(motor.ajustes.vozNombre);
       if (voz) {
         u.voice = voz;
@@ -246,26 +358,42 @@
         // el navegador no lea el texto con la voz por defecto en inglés.
         u.lang = 'es-ES';
       }
-      u.rate = Math.min(10, Math.max(0.1, Number(motor.ajustes.velocidad) || AJUSTES_DEFECTO.velocidad));
+      const velocidad = Number(motor.ajustes.velocidad) || AJUSTES_DEFECTO.velocidad;
+      u.rate = Math.min(10, Math.max(0.1, velocidad));
       u.pitch = Math.min(2, Math.max(0, Number(motor.ajustes.tono) || AJUSTES_DEFECTO.tono));
 
-      // Resaltado palabra a palabra (Chrome/Edge con voces locales lo emiten;
-      // si la voz no lo soporta, simplemente no pasa nada).
+      // Resaltado palabra a palabra. Si la voz emite eventos "boundary" los
+      // usamos (exactos); si no, a los 600 ms arranca una ESTIMACIÓN por
+      // tiempo (~16 caracteres/segundo ajustados a la velocidad elegida).
+      let huboEventos = false;
       u.onboundary = function (e) {
         if (turno !== motor._turno) return;
+        huboEventos = true;
+        if (motor._timerPalabra) { clearInterval(motor._timerPalabra); motor._timerPalabra = null; }
         if (motor.alPalabra && (!e.name || e.name === 'word')) {
           motor.alPalabra(i, e.charIndex || 0);
         }
       };
+      setTimeout(function () {
+        if (turno !== motor._turno || huboEventos || !motor.leyendo) return;
+        let avanceEstimado = 0;
+        motor._timerPalabra = setInterval(function () {
+          if (turno !== motor._turno) { clearInterval(motor._timerPalabra); return; }
+          if (motor.enPausa) return; // en pausa no se avanza
+          avanceEstimado += 0.09 * CARACTERES_POR_SEGUNDO * u.rate;
+          if (motor.alPalabra && avanceEstimado < texto.length) {
+            motor.alPalabra(i, Math.floor(avanceEstimado));
+          }
+        }, 90);
+      }, 600);
 
       // Al acabar la oración, encadenamos la siguiente.
       u.onend = function () {
         if (turno !== motor._turno) return;
         avanzar();
       };
-
-      // Ante un error, avanzamos a la siguiente oración: la lectura nunca se
-      // congela. Las cancelaciones provocadas por nosotros mismos se ignoran.
+      // Ante un error, avanzamos: la lectura nunca se congela. Las
+      // cancelaciones provocadas por nosotros mismos se ignoran.
       u.onerror = function (e) {
         if (turno !== motor._turno) return;
         const err = e && e.error;
@@ -274,36 +402,106 @@
       };
 
       motor._utter = u;
-      if (motor.alEmpezarOracion) motor.alEmpezarOracion(i);
-
       // Pequeño respiro tras cancel(): Chromium a veces ignora un speak()
       // lanzado en el mismo instante que la cancelación.
       setTimeout(function () {
         if (turno === motor._turno) sintesis.speak(u);
       }, 40);
-
-      notificar();
     }
 
-    function avanzar() {
-      if (!motor.leyendo) return;
-      if (motor.indice + 1 < motor.oraciones.length) {
-        hablar(motor.indice + 1);
-      } else {
-        terminar();
+    // ---------- Camino 2: voces neuronales Piper ----------
+
+    /** Pide (o recupera de la caché) el audio WAV de la oración i. */
+    function obtenerAudio(i, voz) {
+      const clave = voz + '|' + i;
+      if (!motor._cacheAudio.has(clave)) {
+        const promesa = motor.sintetizarNeural(motor.oraciones[i], voz, function (p) {
+          // p = {cargado, total} → % de descarga del modelo (solo la 1ª vez)
+          if (motor.alProgresoDescarga && p && p.total) {
+            motor.alProgresoDescarga(Math.min(100, Math.round(p.cargado * 100 / p.total)));
+          }
+        }).catch(function (e) {
+          motor._cacheAudio.delete(clave); // no cachear fallos
+          throw e;
+        });
+        motor._cacheAudio.set(clave, promesa);
+      }
+      return motor._cacheAudio.get(clave);
+    }
+
+    async function hablarNeural(i, turno) {
+      const voz = idPiper(motor.ajustes.vozNombre);
+      try {
+        const wav = await obtenerAudio(i, voz);
+        if (turno !== motor._turno) return;
+        if (motor.alProgresoDescarga) motor.alProgresoDescarga(null); // descarga acabada
+
+        const url = URL.createObjectURL(wav);
+        const audio = new Audio(url);
+        motor._audio = audio;
+        motor._urlAudio = url;
+        // playbackRate cambia la velocidad SIN agudizar la voz: permite
+        // hasta 5x reales con cualquier voz neuronal.
+        try { audio.preservesPitch = true; } catch (e) { /* nada */ }
+        audio.playbackRate = Math.min(16, Math.max(0.25, Number(motor.ajustes.velocidad) || 1));
+
+        audio.onended = function () { if (turno === motor._turno) avanzar(); };
+        audio.onerror = function () { if (turno === motor._turno) avanzar(); };
+
+        // Resaltado de palabra por tiempo de reproducción (proporcional).
+        const texto = motor.oraciones[i];
+        motor._timerPalabra = setInterval(function () {
+          if (turno !== motor._turno) { clearInterval(motor._timerPalabra); return; }
+          if (!audio.duration || audio.paused) return;
+          const fraccion = audio.currentTime / audio.duration;
+          if (motor.alPalabra) {
+            motor.alPalabra(i, Math.min(texto.length - 1, Math.floor(fraccion * texto.length)));
+          }
+        }, 80);
+
+        try {
+          await audio.play();
+        } catch (e) {
+          // El navegador bloquea el sonido hasta que el usuario haga clic
+          // (política de autoplay). Quedamos "en pausa" a la espera del clic.
+          if (turno !== motor._turno) return;
+          motor.enPausa = true;
+          notificar();
+          if (motor.alBloqueoAudio) motor.alBloqueoAudio();
+        }
+
+        // Mientras suena esta oración, dejamos la siguiente sintetizándose
+        // en segundo plano para que no haya huecos entre frases.
+        if (i + 1 < motor.oraciones.length) {
+          obtenerAudio(i + 1, voz).catch(function () { /* se verá al llegar */ });
+        }
+        // Y liberamos audios viejos de la caché.
+        for (const clave of Array.from(motor._cacheAudio.keys())) {
+          const n = Number(clave.split('|')[1]);
+          if (n < i - 1) motor._cacheAudio.delete(clave);
+        }
+      } catch (e) {
+        if (turno !== motor._turno) return;
+        // La voz neuronal falló (sin internet la primera vez, etc.):
+        // avisamos y seguimos leyendo con una voz del sistema.
+        motor._neuralRota = true;
+        if (motor.alAviso) {
+          motor.alAviso('No se pudo usar la voz neuronal (' + ((e && e.message) || e) + '). Sigo con una voz del sistema.');
+        }
+        hablarSistema(i, turno);
       }
     }
+
+    // ---------- Controles públicos ----------
 
     /** Empieza a leer una lista de oraciones desde el índice dado. */
     motor.iniciar = function (oraciones, desde) {
+      motor._cacheAudio.clear();
       motor.oraciones = oraciones || [];
       motor.enPausa = false;
       motor.leyendo = motor.oraciones.length > 0;
-      if (motor.leyendo) {
-        hablar(desde || 0);
-      } else {
-        terminar();
-      }
+      if (motor.leyendo) hablar(desde || 0);
+      else terminar();
     };
 
     /** Detiene la lectura del todo. */
@@ -311,31 +509,45 @@
       motor._turno++;
       motor.leyendo = false;
       motor.enPausa = false;
-      try { sintesis.cancel(); } catch (e) { /* nada */ }
+      limpiarAudio();
+      if (sintesis) { try { sintesis.cancel(); } catch (e) { /* nada */ } }
       notificar();
     };
 
-    /** Pausa la lectura. */
+    /** Pausa la lectura (audio neuronal o voz del sistema). */
     motor.pausar = function () {
       if (!motor.leyendo || motor.enPausa) return;
       motor.enPausa = true;
-      try { sintesis.pause(); } catch (e) { /* nada */ }
+      if (motor._audio) {
+        try { motor._audio.pause(); } catch (e) { /* nada */ }
+      } else if (sintesis) {
+        try { sintesis.pause(); } catch (e) { /* nada */ }
+      }
       notificar();
     };
 
     /**
-     * Reanuda la lectura. pause()/resume() es poco fiable en Chromium con
-     * voces online: si tras 450 ms no se oye nada, relanzamos la oración
-     * actual desde el índice guardado.
+     * Reanuda la lectura. Con el audio neuronal basta play(); con la voz del
+     * sistema, pause()/resume() es poco fiable en Chromium con voces online:
+     * si tras 450 ms no se oye nada, relanzamos la oración actual.
      */
     motor.reanudar = function () {
       if (!motor.leyendo || !motor.enPausa) return;
       motor.enPausa = false;
-      try { sintesis.resume(); } catch (e) { /* nada */ }
+      if (motor._audio) {
+        motor._audio.play().catch(function () {
+          motor.enPausa = true;
+          notificar();
+          if (motor.alBloqueoAudio) motor.alBloqueoAudio();
+        });
+        notificar();
+        return;
+      }
+      if (sintesis) { try { sintesis.resume(); } catch (e) { /* nada */ } }
       const turno = motor._turno;
       setTimeout(function () {
         if (turno !== motor._turno || !motor.leyendo || motor.enPausa) return;
-        if (!sintesis.speaking || sintesis.paused) {
+        if (!sintesis || !sintesis.speaking || sintesis.paused) {
           hablar(motor.indice); // resume() falló: relanzar la oración actual
         }
       }, 450);
@@ -350,18 +562,45 @@
       else terminar();
     };
 
-    /** Vuelve a la oración anterior (o al principio de la actual si es la primera). */
+    /** Vuelve a la oración anterior. */
     motor.anterior = function () {
       if (!motor.leyendo) return;
       motor.enPausa = false;
       hablar(Math.max(motor.indice - 1, 0));
     };
 
-    /** Salta a una oración concreta (clic en el panel). */
+    /** Salta a una oración concreta (clic en el texto). */
     motor.saltarA = function (i) {
       if (!motor.leyendo || i < 0 || i >= motor.oraciones.length) return;
       motor.enPausa = false;
       hablar(i);
+    };
+
+    /**
+     * Cambia la velocidad al vuelo. Con audio neuronal es instantáneo
+     * (playbackRate); con la voz del sistema se relanza la oración actual.
+     */
+    motor.fijarVelocidad = function (v) {
+      motor.ajustes.velocidad = v;
+      if (motor._audio) {
+        motor._audio.playbackRate = Math.min(16, Math.max(0.25, Number(v) || 1));
+      } else if (motor.leyendo && !motor.enPausa) {
+        hablar(motor.indice);
+      }
+    };
+
+    /** Cambia el tono (solo afecta a las voces del sistema). */
+    motor.fijarTono = function (t) {
+      motor.ajustes.tono = t;
+      if (!motor._audio && motor.leyendo && !motor.enPausa) hablar(motor.indice);
+    };
+
+    /** Cambia la voz al vuelo. */
+    motor.fijarVoz = function (nombre) {
+      motor.ajustes.vozNombre = nombre;
+      motor._neuralRota = false;   // nueva oportunidad para la voz neuronal
+      motor._cacheAudio.clear();   // los audios cacheados eran de otra voz
+      if (motor.leyendo && !motor.enPausa) hablar(motor.indice);
     };
 
     return motor;
@@ -372,6 +611,10 @@
   // ------------------------------------------------------------------
   global.LectorTTS = {
     AJUSTES_DEFECTO: AJUSTES_DEFECTO,
+    VOCES_NEURALES: VOCES_NEURALES,
+    esVozNeural: esVozNeural,
+    idPiper: idPiper,
+    trocearRangos: trocearRangos,
     trocearEnOraciones: trocearEnOraciones,
     refrescarVoces: refrescarVoces,
     obtenerVoces: obtenerVoces,

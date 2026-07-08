@@ -102,17 +102,10 @@
     }
   }
 
-  // ---- Voces (las de español SIEMPRE arriba) -----------------------------
+  // ---- Voces (neuronales arriba, luego las de español del sistema) --------
 
   function poblarVoces() {
     const voces = speechSynthesis.getVoices() || [];
-    if (!voces.length) return; // llegarán con onvoiceschanged
-
-    const esEspanola = (v) => v.lang && v.lang.toLowerCase().startsWith('es');
-    const porIdiomaYNombre = (a, b) =>
-      a.lang.localeCompare(b.lang) || a.name.localeCompare(b.name);
-    const espanolas = voces.filter(esEspanola).sort(porIdiomaYNombre);
-    const otras = voces.filter((v) => !esEspanola(v)).sort(porIdiomaYNombre);
 
     selVoz.innerHTML = '';
 
@@ -121,6 +114,24 @@
     auto.value = '';
     auto.textContent = '✨ Automática (primera voz en español)';
     selVoz.appendChild(auto);
+
+    // Voces neuronales Piper: mejor calidad, 100% locales tras una descarga
+    // inicial. Funcionan incluso en navegadores sin voces propias (Opera GX).
+    const grupoNeural = document.createElement('optgroup');
+    grupoNeural.label = '🌟 Neuronales — mejor calidad (descarga única)';
+    for (const voz of LectorTTS.VOCES_NEURALES) {
+      const op = document.createElement('option');
+      op.value = voz.id;
+      op.textContent = voz.etiqueta;
+      grupoNeural.appendChild(op);
+    }
+    selVoz.appendChild(grupoNeural);
+
+    const esEspanola = (v) => v.lang && v.lang.toLowerCase().startsWith('es');
+    const porIdiomaYNombre = (a, b) =>
+      a.lang.localeCompare(b.lang) || a.name.localeCompare(b.name);
+    const espanolas = voces.filter(esEspanola).sort(porIdiomaYNombre);
+    const otras = voces.filter((v) => !esEspanola(v)).sort(porIdiomaYNombre);
 
     const anadirGrupo = (etiqueta, lista) => {
       if (!lista.length) return;
@@ -134,12 +145,24 @@
       }
       selVoz.appendChild(grupo);
     };
-    anadirGrupo('Español', espanolas);
-    anadirGrupo('Otros idiomas', otras);
+    anadirGrupo('Sistema · Español', espanolas);
+    anadirGrupo('Sistema · Otros idiomas', otras);
 
-    // Restaurar la voz guardada si sigue instalada.
+    // Restaurar la voz guardada si sigue disponible.
     selVoz.value = ajustes.vozNombre || '';
     if (selVoz.value !== (ajustes.vozNombre || '')) selVoz.value = '';
+
+    avisarSegunVoz();
+  }
+
+  /** Pistas según la voz elegida y las voces disponibles. */
+  function avisarSegunVoz() {
+    if (LectorTTS.esVozNeural(selVoz.value)) {
+      mostrarAviso('Voz neuronal: la primera vez se descarga el modelo (25–120 MB según la voz). Después funciona sin conexión.');
+    } else if (!(speechSynthesis.getVoices() || []).length) {
+      // Opera GX y otros Chromium sin voces del sistema.
+      mostrarAviso('Tu navegador no trae voces del sistema (pasa en Opera GX): elige una voz 🌟 neuronal y listo.', true);
+    }
   }
 
   // En Chromium getVoices() devuelve [] al abrir: repoblar cuando avisen.
@@ -158,6 +181,8 @@
   selVoz.addEventListener('change', () => {
     ajustes.vozNombre = selVoz.value;
     chrome.storage.sync.set({ vozNombre: selVoz.value });
+    mostrarAviso('');
+    avisarSegunVoz();
   });
 
   rangoVel.addEventListener('input', () => {
