@@ -142,13 +142,45 @@ function limitesParrafo(oracion) {
   return { ini, fin };
 }
 
+// ---- Auto-encuadre (seguir la lectura) ---------------------------------------
+// Por defecto está APAGADO: puedes navegar por el documento libremente
+// mientras suena la voz, sin que la vista vuelva sola a la línea leída.
+
+const btnSeguir = document.getElementById('btn-seguir');
+let seguirLectura = false;
+
+function pintarSeguir() {
+  btnSeguir.textContent = seguirLectura ? '🎯 Siguiendo' : '🧭 Libre';
+  btnSeguir.title = seguirLectura
+    ? 'La vista sigue a la lectura. Clic para navegar libremente.'
+    : 'Navegación libre. Clic para que la vista siga a la lectura.';
+}
+pintarSeguir();
+
+btnSeguir.addEventListener('click', () => {
+  seguirLectura = !seguirLectura;
+  pintarSeguir();
+  LectorTTS.guardarAjustes({ seguirPdf: seguirLectura });
+  if (seguirLectura) irAOracionActual(); // al activarlo, encuadra ya
+});
+
+/** Encuadra la oración que se está leyendo (p. ej. al activar el seguimiento). */
+function irAOracionActual() {
+  if (!vista || !vista.oraciones.length) return;
+  const o = vista.oraciones[motor.indice];
+  if (!o) return;
+  const rango = crearRango(o.ini, o.fin);
+  if (rango) autoDesplazar(rango, true);
+}
+
 /** Desplaza el documento para que el rango quede a la vista. */
-function autoDesplazar(rango) {
+function autoDesplazar(rango, forzar) {
+  if (!seguirLectura && !forzar) return; // navegación libre: no tocar el scroll
   let rect;
   try { rect = rango.getBoundingClientRect(); } catch (e) { return; }
   if (!rect || (rect.top === 0 && rect.bottom === 0)) return;
   const zona = elZona.getBoundingClientRect();
-  if (rect.top < zona.top + 70 || rect.bottom > zona.bottom - 130) {
+  if (forzar || rect.top < zona.top + 70 || rect.bottom > zona.bottom - 130) {
     const cont = rango.startContainer;
     const el = cont.nodeType === Node.TEXT_NODE ? cont.parentElement : cont;
     if (el && el.scrollIntoView) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -232,6 +264,13 @@ LectorTTS.cargarAjustes((ajustes) => {
   pintarTono(ajustes.tono);
   poblarVoces();
 });
+// La preferencia de auto-encuadre se guarda aparte (por defecto: libre).
+try {
+  chrome.storage.sync.get({ seguirPdf: false }, (r) => {
+    seguirLectura = !!r.seguirPdf;
+    pintarSeguir();
+  });
+} catch (e) { /* nada */ }
 
 chrome.storage.onChanged.addListener((cambios, area) => {
   if (area !== 'sync') return;
@@ -247,6 +286,10 @@ chrome.storage.onChanged.addListener((cambios, area) => {
     motor.fijarVoz(cambios.vozNombre.newValue);
     selVoz.value = cambios.vozNombre.newValue || '';
   }
+  if ('seguirPdf' in cambios) {
+    seguirLectura = !!cambios.seguirPdf.newValue;
+    pintarSeguir();
+  }
 });
 
 // Contadores de −/+ 0.1 (velocidad y tono).
@@ -256,6 +299,11 @@ function paso(clave, delta, min, max, pintar) {
   const nuevo = Math.round(Math.min(max, Math.max(min, actual + delta)) * 10) / 10;
   motor.ajustes[clave] = nuevo; // respuesta inmediata en pasos seguidos
   pintar(nuevo);
+  // Con audio neuronal sonando, la velocidad cambia AL INSTANTE (sin esperar
+  // el guardado): se nota en el mismo clic.
+  if (clave === 'velocidad' && motor._audio) {
+    motor._audio.playbackRate = Math.min(16, Math.max(0.25, nuevo));
+  }
   clearTimeout(timersPaso[clave]);
   timersPaso[clave] = setTimeout(() => {
     LectorTTS.guardarAjustes({ [clave]: nuevo }); // el eco de storage lo aplica al motor

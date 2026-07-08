@@ -51,11 +51,25 @@
 
   LectorTTS.cargarAjustes((ajustes) => { motor.ajustes = ajustes; });
 
+  // Auto-encuadre en páginas web: por defecto SÍ sigue la lectura (se puede
+  // apagar desde la barrita; la preferencia queda guardada).
+  let seguirLectura = true;
+  try {
+    chrome.storage.sync.get({ seguirWeb: true }, (r) => {
+      seguirLectura = !!r.seguirWeb;
+      pintarSeguirBarra();
+    });
+  } catch (e) { /* nada */ }
+
   chrome.storage.onChanged.addListener((cambios, area) => {
     if (area !== 'sync') return;
     if ('velocidad' in cambios) motor.fijarVelocidad(cambios.velocidad.newValue);
     if ('tono' in cambios) motor.fijarTono(cambios.tono.newValue);
     if ('vozNombre' in cambios) motor.fijarVoz(cambios.vozNombre.newValue);
+    if ('seguirWeb' in cambios) {
+      seguirLectura = !!cambios.seguirWeb.newValue;
+      pintarSeguirBarra();
+    }
     sincronizarBarra(); // reflejar el cambio en la barrita si está abierta
   });
 
@@ -259,17 +273,27 @@
   }
 
   /** Desplaza la página para que el rango quede a la vista. */
-  function autoDesplazar(rango) {
+  function autoDesplazar(rango, forzar) {
+    if (!seguirLectura && !forzar) return; // navegación libre: no tocar el scroll
     let rect;
     try { rect = rango.getBoundingClientRect(); } catch (e) { return; }
     if (!rect || (rect.top === 0 && rect.bottom === 0)) return;
-    if (rect.top < 80 || rect.bottom > window.innerHeight - 150) {
+    if (forzar || rect.top < 80 || rect.bottom > window.innerHeight - 150) {
       const cont = rango.startContainer;
       const el = cont.nodeType === Node.TEXT_NODE ? cont.parentElement : cont;
       if (el && el.scrollIntoView) {
         el.scrollIntoView({ behavior: 'smooth', block: 'center' });
       }
     }
+  }
+
+  /** Encuadra la oración que se está leyendo (al activar el seguimiento). */
+  function irAOracionActual() {
+    if (!lectura || !lectura.oraciones.length) return;
+    const o = lectura.oraciones[motor.indice];
+    if (!o) return;
+    const rango = crearRango(o.ini, o.fin);
+    if (rango) autoDesplazar(rango, true);
   }
 
   /** Resalta la oración `idx` en su sitio de la página. */
@@ -410,6 +434,7 @@
             <span class="valor val-tono">1.0</span>
             <button class="tono-mas">+</button>
           </div>
+          <button class="btn btn-seguir" title="Auto-encuadre de la lectura">🎯</button>
         </div>
         <span class="mensaje"></span>
       </div>
@@ -437,12 +462,22 @@
       LectorTTS.guardarAjustes({ vozNombre: selVoz.value });
     });
 
+    // Interruptor de auto-encuadre: 🎯 la vista sigue a la lectura /
+    // 🧭 navegación libre (la preferencia se guarda).
+    shadow.querySelector('.btn-seguir').addEventListener('click', () => {
+      seguirLectura = !seguirLectura;
+      pintarSeguirBarra();
+      LectorTTS.guardarAjustes({ seguirWeb: seguirLectura });
+      if (seguirLectura) irAOracionActual(); // al activarlo, encuadra ya
+    });
+
     (document.documentElement || document.body).appendChild(host);
     barra = {
       host,
       shadow,
       selVoz,
       btnPausa: shadow.querySelector('.btn-pausa'),
+      btnSeguir: shadow.querySelector('.btn-seguir'),
       progreso: shadow.querySelector('.progreso'),
       mensaje: shadow.querySelector('.mensaje'),
       valVel: shadow.querySelector('.val-vel'),
@@ -450,6 +485,16 @@
     };
     poblarVocesBarra();
     sincronizarBarra();
+    pintarSeguirBarra();
+  }
+
+  /** Refleja el estado del auto-encuadre en su botón de la barrita. */
+  function pintarSeguirBarra() {
+    if (!barra) return;
+    barra.btnSeguir.textContent = seguirLectura ? '🎯' : '🧭';
+    barra.btnSeguir.title = seguirLectura
+      ? 'La vista sigue a la lectura. Clic para navegar libremente.'
+      : 'Navegación libre. Clic para que la vista siga a la lectura.';
   }
 
   const timersPasoBarra = {};
@@ -458,6 +503,10 @@
     const nuevo = Math.round(Math.min(maximo, Math.max(minimo, actual + delta)) * 10) / 10;
     motor.ajustes[clave] = nuevo; // respuesta visual inmediata en pasos seguidos
     sincronizarBarra();
+    // Con audio neuronal sonando, la velocidad cambia AL INSTANTE.
+    if (clave === 'velocidad' && motor._audio) {
+      motor._audio.playbackRate = Math.min(16, Math.max(0.25, nuevo));
+    }
     clearTimeout(timersPasoBarra[clave]);
     timersPasoBarra[clave] = setTimeout(() => {
       LectorTTS.guardarAjustes({ [clave]: nuevo });

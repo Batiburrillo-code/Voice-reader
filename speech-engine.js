@@ -459,15 +459,21 @@
           }
         }, 80);
 
-        try {
-          await audio.play();
-        } catch (e) {
-          // El navegador bloquea el sonido hasta que el usuario haga clic
-          // (política de autoplay). Quedamos "en pausa" a la espera del clic.
-          if (turno !== motor._turno) return;
-          motor.enPausa = true;
+        // Si el usuario pulsó pausa mientras se sintetizaba esta oración,
+        // NO arrancamos el sonido: queda listo para el reanudar.
+        if (motor.enPausa) {
           notificar();
-          if (motor.alBloqueoAudio) motor.alBloqueoAudio();
+        } else {
+          try {
+            await audio.play();
+          } catch (e) {
+            // El navegador bloquea el sonido hasta que el usuario haga clic
+            // (política de autoplay). Quedamos "en pausa" a la espera del clic.
+            if (turno !== motor._turno) return;
+            motor.enPausa = true;
+            notificar();
+            if (motor.alBloqueoAudio) motor.alBloqueoAudio();
+          }
         }
 
         // Mientras suena esta oración, dejamos la siguiente sintetizándose
@@ -514,27 +520,38 @@
       notificar();
     };
 
-    /** Pausa la lectura (audio neuronal o voz del sistema). */
+    /**
+     * Pausa la lectura AL INSTANTE.
+     *  - Audio neuronal sonando → audio.pause() (se reanuda donde estaba).
+     *  - Voz del sistema o síntesis en curso → cancelamos directamente:
+     *    speechSynthesis.pause() puede tardar segundos o no responder con
+     *    voces online, así que preferimos silencio inmediato y, al reanudar,
+     *    relanzar la oración actual desde su principio.
+     */
     motor.pausar = function () {
       if (!motor.leyendo || motor.enPausa) return;
       motor.enPausa = true;
       if (motor._audio) {
         try { motor._audio.pause(); } catch (e) { /* nada */ }
-      } else if (sintesis) {
-        try { sintesis.pause(); } catch (e) { /* nada */ }
+      } else {
+        // El turno nuevo invalida la utterance en curso y cualquier síntesis
+        // neuronal pendiente (su audio quedará cacheado para el reanudar).
+        motor._turno++;
+        if (sintesis) { try { sintesis.cancel(); } catch (e) { /* nada */ } }
+        if (motor._timerPalabra) {
+          clearInterval(motor._timerPalabra);
+          motor._timerPalabra = null;
+        }
       }
       notificar();
     };
 
-    /**
-     * Reanuda la lectura. Con el audio neuronal basta play(); con la voz del
-     * sistema, pause()/resume() es poco fiable en Chromium con voces online:
-     * si tras 450 ms no se oye nada, relanzamos la oración actual.
-     */
+    /** Reanuda la lectura. */
     motor.reanudar = function () {
       if (!motor.leyendo || !motor.enPausa) return;
       motor.enPausa = false;
       if (motor._audio) {
+        // Audio neuronal pausado: sigue exactamente donde estaba.
         motor._audio.play().catch(function () {
           motor.enPausa = true;
           notificar();
@@ -543,15 +560,9 @@
         notificar();
         return;
       }
-      if (sintesis) { try { sintesis.resume(); } catch (e) { /* nada */ } }
-      const turno = motor._turno;
-      setTimeout(function () {
-        if (turno !== motor._turno || !motor.leyendo || motor.enPausa) return;
-        if (!sintesis || !sintesis.speaking || sintesis.paused) {
-          hablar(motor.indice); // resume() falló: relanzar la oración actual
-        }
-      }, 450);
-      notificar();
+      // Voz del sistema (o pausa durante una síntesis): relanzar la oración
+      // actual. Si su audio neuronal ya estaba sintetizado, sale de la caché.
+      hablar(motor.indice);
     };
 
     /** Salta a la oración siguiente. */

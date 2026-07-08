@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Lector TTS",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "Lee páginas web y PDFs en voz alta con resaltado sobre el propio texto, tipo Speechify. Voces neuronales gratis y sin servicios externos.",
   "minimum_chrome_version": "121",
 

@@ -32,6 +32,14 @@ Funciona con **una sola base de código** en Chrome, Brave, Chromium,
   **sobre el propio documento**. Clic en cualquier frase del PDF para saltar.
   Las páginas se renderizan según te acercas, para que los PDFs grandes no
   consuman memoria de golpe.
+- **Navegación libre mientras lee** 🧭: en el PDF, por defecto la vista NO te
+  persigue — puedes hojear el documento tranquilamente mientras la voz sigue
+  leyendo. Si quieres que la vista acompañe a la lectura, pulsa el botón
+  **🧭 Libre / 🎯 Siguiendo** de la barra. En las páginas web es al revés
+  (sigue por defecto) y se cambia con el mismo botón 🎯/🧭 de la barrita.
+  La preferencia queda guardada.
+- **Pausa instantánea**: el botón ⏸ corta la voz en el acto (y al reanudar,
+  las voces del sistema retoman desde el principio de la frase).
 - **Español primero**: interfaz en español y selección automática de una voz
   en español si no has elegido ninguna.
 
