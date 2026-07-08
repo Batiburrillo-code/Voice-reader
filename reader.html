@@ -4,105 +4,140 @@
   <meta charset="utf-8">
   <title>Lector TTS — Lector de PDF</title>
   <style>
-    /* Página lectora de PDFs: mismo estilo oscuro que el panel */
+    /* ---- Lector de PDF: el documento se ve como en el visor del navegador
+       (páginas renderizadas) y el resaltado se pinta ENCIMA del propio PDF --- */
     * { box-sizing: border-box; margin: 0; padding: 0; }
     html, body { height: 100%; }
     body {
-      background: #17171d; color: #e9e9ef;
-      font-family: Georgia, 'Times New Roman', serif;
+      background: #1b1b23; color: #e9e9ef;
+      font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
       display: flex; flex-direction: column;
     }
 
     /* Barra superior con los controles */
     header {
-      flex: none; position: sticky; top: 0; z-index: 10;
-      background: #1f1f28; border-bottom: 1px solid #2c2c36;
-      padding: 10px 18px;
-      font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
-      display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+      flex: none; z-index: 10;
+      background: linear-gradient(180deg, #23232e, #1f1f28);
+      border-bottom: 1px solid #34344a;
+      padding: 10px 16px;
+      display: flex; flex-wrap: wrap; align-items: center; gap: 9px;
+      box-shadow: 0 4px 18px rgba(0, 0, 0, .35);
     }
     .titulo {
-      flex: 1 1 200px; min-width: 120px;
-      font-size: 14px; font-weight: 600; color: #fff;
+      flex: 1 1 180px; min-width: 120px;
+      font-size: 14px; font-weight: 650; color: #fff;
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
+    .titulo::before { content: '📄 '; }
     button, select {
-      appearance: none; border: 1px solid #343442; background: #262633;
-      color: #e9e9ef; border-radius: 8px; cursor: pointer;
-      font-size: 13px; padding: 8px 12px;
-      font-family: inherit;
+      appearance: none; border: 1px solid #3a3a4e; background: #2a2a38;
+      color: #e9e9ef; border-radius: 10px; cursor: pointer;
+      font-size: 13px; padding: 8px 12px; font-family: inherit;
+      transition: background .15s;
     }
-    button:hover { background: #32323f; }
-    .primario { background: #6c5cff; border-color: #6c5cff; color: #fff; }
-    .primario:hover { background: #7d6fff; }
-    select { max-width: 220px; font-size: 12px; }
-    .fila-vel { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #9a9aac; }
-    input[type="range"] {
-      width: 110px; appearance: none; -webkit-appearance: none; height: 5px;
-      background: #343442; border-radius: 3px; outline: none; cursor: pointer;
+    button:hover { background: #363648; }
+    .primario {
+      background: linear-gradient(135deg, #7c5cff, #5a8bff);
+      border-color: transparent; color: #fff; font-size: 15px;
     }
-    input[type="range"]::-webkit-slider-thumb {
-      -webkit-appearance: none; width: 15px; height: 15px; border-radius: 50%;
-      background: #6c5cff; border: 2px solid #fff; cursor: pointer;
+    .primario:hover { filter: brightness(1.12); }
+    select { max-width: 230px; font-size: 12px; }
+    .grupo {
+      display: flex; align-items: center; gap: 4px;
+      background: #2a2a38; border: 1px solid #3a3a4e;
+      border-radius: 10px; padding: 3px 6px;
     }
-    input[type="range"]::-moz-range-thumb {
-      width: 12px; height: 12px; border-radius: 50%;
-      background: #6c5cff; border: 2px solid #fff; cursor: pointer;
+    .grupo .etiqueta { font-size: 10.5px; color: #9a9aac; padding: 0 3px; }
+    .grupo button {
+      border: none; background: transparent; padding: 4px 7px;
+      font-size: 14px; font-weight: 700; border-radius: 7px;
     }
-    #txt-vel { min-width: 36px; color: #fff; font-weight: 600; }
-    #progreso { font-size: 12px; color: #9a9aac; }
+    .grupo button:hover { background: #3a3a4e; }
+    .grupo .valor { font-size: 12.5px; font-weight: 650; color: #fff; min-width: 38px; text-align: center; }
+    #progreso { font-size: 12px; color: #9a9aac; min-width: 60px; text-align: center; }
 
-    /* Zona de contenido con el texto del PDF */
-    main { flex: 1; overflow-y: auto; }
-    .columna {
-      max-width: 760px; margin: 0 auto; padding: 34px 28px 60vh;
-      font-size: 19px; line-height: 1.7;
+    /* Zona del documento (con scroll) */
+    main { flex: 1; overflow-y: auto; padding: 22px 12px 40vh; }
+    #visor { display: flex; flex-direction: column; align-items: center; gap: 18px; }
+    .pagina {
+      position: relative; background: #fff;
+      box-shadow: 0 6px 26px rgba(0, 0, 0, .5);
+      border-radius: 3px; overflow: hidden;
     }
-    .oracion { cursor: pointer; border-radius: 4px; padding: 1px 2px; }
-    .oracion:hover { background: rgba(124, 92, 255, .14); }
-    .oracion.actual { background: rgba(124, 92, 255, .26); }
-    .palabra.palabra-actual { background: #6c5cff; color: #fff; border-radius: 3px; }
+    .pagina canvas { display: block; }
 
-    /* Mensajes de estado / bienvenida */
+    /* Capa de texto de pdf.js: texto invisible perfectamente alineado con el
+       lienzo; sobre ella se pintan los resaltados y funciona la selección. */
+    .textLayer {
+      position: absolute; inset: 0; overflow: hidden; line-height: 1;
+      text-size-adjust: none; forced-color-adjust: none;
+      transform-origin: 0 0; z-index: 1;
+    }
+    .textLayer :is(span, br) {
+      color: transparent; position: absolute; white-space: pre;
+      cursor: text; transform-origin: 0% 0%;
+    }
+    .textLayer span.markedContent { top: 0; height: 0; }
+
+    /* Resaltados sobre el PDF: solo fondos translúcidos, para que el texto
+       del documento siga leyéndose debajo. */
+    ::highlight(lector-parrafo)  { background-color: rgba(124, 92, 255, .10); }
+    ::highlight(lector-oracion)  { background-color: rgba(124, 92, 255, .28); }
+    ::highlight(lector-palabra)  { background-color: rgba(255, 179, 71, .55); }
+
+    /* Mensajes de estado / bienvenida (flotan sobre el documento) */
     #estado {
-      font-family: system-ui, sans-serif; font-size: 14.5px; line-height: 1.6;
-      color: #c9c9d6; background: #262633; border: 1px solid #343442;
-      border-radius: 10px; padding: 16px 18px; margin-bottom: 22px;
+      position: sticky; top: 8px; z-index: 5;
+      max-width: 720px; margin: 0 auto 14px;
+      font-size: 14px; line-height: 1.6; color: #e6e6f0;
+      background: rgba(42, 42, 56, .96); border: 1px solid #3a3a4e;
+      border-radius: 12px; padding: 13px 16px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, .4);
     }
     #estado.oculto { display: none; }
-    #estado.error { border-color: #b3453a; color: #ffb3a8; }
-    #estado kbd {
-      background: #17171d; border: 1px solid #343442; border-radius: 4px; padding: 0 4px;
-    }
+    #estado.error { border-color: #b3453a; color: #ffb9ae; }
+    #estado b { color: #fff; }
   </style>
 </head>
 <body>
   <header>
     <span class="titulo" id="titulo">Lector de PDF</span>
+
     <button id="btn-anterior" title="Oración anterior">⏮</button>
     <button id="btn-pausa" class="primario" title="Pausar / Reanudar">⏸</button>
     <button id="btn-siguiente" title="Oración siguiente">⏭</button>
-    <div class="fila-vel">
-      <input type="range" id="rango-vel" min="0.5" max="5" step="0.1" value="1.1">
-      <span id="txt-vel">1.1×</span>
+
+    <!-- Velocidad con contadores de 0.1 en 0.1 -->
+    <div class="grupo" title="Velocidad de lectura (0.5× a 5×)">
+      <span class="etiqueta">Velocidad</span>
+      <button id="btn-vel-menos">−</button>
+      <span class="valor" id="txt-vel">1.1×</span>
+      <button id="btn-vel-mas">+</button>
     </div>
+
+    <!-- Tono con contadores (solo afecta a las voces del sistema) -->
+    <div class="grupo" title="Tono de la voz (voces del sistema)">
+      <span class="etiqueta">Tono</span>
+      <button id="btn-tono-menos">−</button>
+      <span class="valor" id="txt-tono">1.0</span>
+      <button id="btn-tono-mas">+</button>
+    </div>
+
     <select id="sel-voz" title="Voz"></select>
     <button id="btn-abrir" title="Abrir un PDF de tu equipo">📂 Abrir PDF…</button>
     <span id="progreso"></span>
   </header>
 
-  <main>
-    <div class="columna">
-      <div id="estado">Preparando el lector…</div>
-      <div id="contenido"></div>
-    </div>
+  <main id="zona">
+    <div id="estado">Preparando el lector…</div>
+    <div id="visor"></div>
   </main>
 
   <!-- Selector de archivo oculto, para PDFs locales -->
   <input type="file" id="input-archivo" accept="application/pdf,.pdf" style="display:none">
 
   <!-- Motor de lectura compartido (script clásico) y lógica del lector (módulo,
-       porque pdf.js v4 se distribuye como módulo ES). Todo local: nada de CDNs. -->
+       porque pdf.js v4 y vits-web se distribuyen como módulos ES). Todo local. -->
   <script src="speech-engine.js"></script>
   <script type="module" src="reader.js"></script>
 </body>

@@ -4,55 +4,78 @@
   <meta charset="utf-8">
   <title>Lector TTS</title>
   <style>
-    /* Popup oscuro y compacto, estilo Speechify */
+    /* Popup oscuro y amigable, con acento morado */
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
-      width: 330px;
-      background: #17171d; color: #e9e9ef;
+      width: 340px;
+      background: linear-gradient(180deg, #1d1d26, #17171d 60%);
+      color: #e9e9ef;
       font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
       font-size: 13px;
       padding: 14px 14px 12px;
     }
     h1 {
       font-size: 15px; font-weight: 700; color: #fff;
-      display: flex; align-items: center; gap: 8px; margin-bottom: 12px;
+      display: flex; align-items: center; gap: 9px; margin-bottom: 13px;
     }
-    h1 .punto { color: #6c5cff; }
-    label { display: block; font-size: 11.5px; color: #9a9aac; margin: 10px 0 4px; }
+    .logo {
+      width: 26px; height: 26px; border-radius: 8px;
+      background: linear-gradient(135deg, #7c5cff, #5a8bff);
+      display: grid; place-items: center; font-size: 14px;
+      box-shadow: 0 3px 10px rgba(124, 92, 255, .35);
+    }
+    label { display: block; font-size: 11px; color: #9a9aac; margin: 11px 0 5px; letter-spacing: .2px; }
     select {
-      width: 100%; padding: 8px; border-radius: 8px;
-      border: 1px solid #343442; background: #262633; color: #e9e9ef;
+      width: 100%; padding: 9px; border-radius: 10px;
+      border: 1px solid #3a3a4e; background: #262633; color: #e9e9ef;
       font-size: 12.5px; cursor: pointer;
     }
-    .fila-slider { display: flex; align-items: center; gap: 10px; }
-    .fila-slider output { min-width: 42px; text-align: right; color: #fff; font-weight: 600; font-size: 12.5px; }
+    select:hover { background: #2c2c3b; }
+
+    /* Slider + contadores de −/+ 0.1 */
+    .fila-slider { display: flex; align-items: center; gap: 7px; }
+    .fila-slider output { min-width: 40px; text-align: right; color: #fff; font-weight: 650; font-size: 12.5px; }
+    .paso {
+      appearance: none; border: 1px solid #3a3a4e; background: #262633;
+      color: #e9e9ef; border-radius: 8px; cursor: pointer;
+      width: 26px; height: 26px; font-size: 14px; font-weight: 700; line-height: 1;
+      transition: background .15s;
+    }
+    .paso:hover { background: #363648; }
     input[type="range"] {
-      flex: 1; appearance: none; -webkit-appearance: none; height: 5px;
-      background: #343442; border-radius: 3px; outline: none; cursor: pointer;
+      flex: 1; appearance: none; -webkit-appearance: none; height: 6px;
+      background: linear-gradient(90deg, #7c5cff, #5a8bff) no-repeat #343442;
+      background-size: 30% 100%;
+      border-radius: 3px; outline: none; cursor: pointer;
     }
     input[type="range"]::-webkit-slider-thumb {
-      -webkit-appearance: none; width: 16px; height: 16px; border-radius: 50%;
-      background: #6c5cff; border: 2px solid #fff; cursor: pointer;
+      -webkit-appearance: none; width: 17px; height: 17px; border-radius: 50%;
+      background: #fff; border: 3px solid #7c5cff; cursor: pointer;
+      box-shadow: 0 2px 6px rgba(0, 0, 0, .4);
     }
     input[type="range"]::-moz-range-thumb {
       width: 13px; height: 13px; border-radius: 50%;
-      background: #6c5cff; border: 2px solid #fff; cursor: pointer;
+      background: #fff; border: 3px solid #7c5cff; cursor: pointer;
     }
-    .botones { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 14px; }
+
+    .botones { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 15px; }
     button {
-      appearance: none; border: 1px solid #343442; border-radius: 9px;
+      appearance: none; border: 1px solid #3a3a4e; border-radius: 11px;
       background: #262633; color: #e9e9ef; cursor: pointer;
-      padding: 9px 8px; font-size: 12.5px; font-weight: 600;
+      padding: 10px 8px; font-size: 12.5px; font-weight: 600;
+      transition: background .15s, filter .15s;
     }
-    button:hover { background: #32323f; }
-    .primario { background: #6c5cff; border-color: #6c5cff; color: #fff; }
-    .primario:hover { background: #7d6fff; }
+    button:hover { background: #363648; }
+    .primario {
+      background: linear-gradient(135deg, #7c5cff, #5a8bff);
+      border-color: transparent; color: #fff;
+    }
+    .primario:hover { filter: brightness(1.12); }
     .transporte { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 8px; }
-    .transporte button { font-size: 15px; padding: 8px 4px; }
-    .ancho { grid-column: 1 / -1; }
+    .transporte button { font-size: 15px; padding: 9px 4px; }
     #btn-pdf, #btn-permisos { display: none; margin-top: 8px; width: 100%; }
-    #btn-pdf { background: #b3453a; border-color: #b3453a; color: #fff; }
-    #btn-pdf:hover { background: #c85a4e; }
+    #btn-pdf { background: linear-gradient(135deg, #e2574a, #b3453a); border-color: transparent; color: #fff; }
+    #btn-pdf:hover { filter: brightness(1.1); }
     #estado {
       margin-top: 10px; min-height: 16px; font-size: 11.5px;
       color: #9a9aac; line-height: 1.45;
@@ -63,29 +86,33 @@
       font-size: 10.5px; color: #6e6e80; line-height: 1.5;
     }
     kbd {
-      background: #262633; border: 1px solid #343442; border-radius: 4px;
+      background: #262633; border: 1px solid #3a3a4e; border-radius: 4px;
       padding: 0 4px; font-family: inherit;
     }
   </style>
 </head>
 <body>
-  <h1><span class="punto">●</span> Lector TTS</h1>
+  <h1><span class="logo">🔊</span> Lector TTS</h1>
 
-  <!-- Selector de voz: las voces en español aparecen primero -->
+  <!-- Selector de voz: neuronales arriba, luego español del sistema -->
   <label for="sel-voz">Voz</label>
   <select id="sel-voz"></select>
 
-  <!-- Velocidad: de 0.5× a 5× (algunas voces limitan el máximo real) -->
+  <!-- Velocidad: de 0.5× a 5×, con contadores de 0.1 en 0.1 -->
   <label for="rango-vel">Velocidad</label>
   <div class="fila-slider">
+    <button class="paso" id="btn-vel-menos" title="Bajar 0.1">−</button>
     <input type="range" id="rango-vel" min="0.5" max="5" step="0.1" value="1.1">
+    <button class="paso" id="btn-vel-mas" title="Subir 0.1">+</button>
     <output id="txt-vel">1.1×</output>
   </div>
 
-  <!-- Tono de la voz -->
-  <label for="rango-tono">Tono</label>
+  <!-- Tono de la voz (voces del sistema), con contadores -->
+  <label for="rango-tono">Tono <span style="color:#6e6e80">(voces del sistema)</span></label>
   <div class="fila-slider">
+    <button class="paso" id="btn-tono-menos" title="Bajar 0.1">−</button>
     <input type="range" id="rango-tono" min="0.5" max="2" step="0.1" value="1">
+    <button class="paso" id="btn-tono-mas" title="Subir 0.1">+</button>
     <output id="txt-tono">1.0</output>
   </div>
 

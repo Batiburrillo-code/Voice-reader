@@ -10,13 +10,15 @@ Funciona con **una sola base de código** en Chrome, Brave, Chromium,
 
 ## ✨ Qué sabe hacer
 
-- **Leer el artículo de la página** resaltando **en el propio texto** la
-  oración que suena (y la palabra actual dentro de ella), con desplazamiento
-  automático. Haz clic sobre cualquier frase del texto para saltar a ella.
+- **Leer el artículo de la página** resaltando **en el propio texto**, a tres
+  niveles sincronizados: el párrafo (tinte suave), la oración que suena y la
+  palabra actual, con desplazamiento automático. Haz clic sobre cualquier
+  frase del texto para saltar a ella.
 - **Leer solo lo que selecciones**: clic derecho → «🔊 Leer selección», o el
   atajo de teclado **Alt+L**.
-- **Barrita flotante de controles** mientras lees: pausa, anterior/siguiente,
-  velocidad y cerrar. Los controles completos siguen en el popup.
+- **Barrita flotante con todos los controles** mientras lees: pausa,
+  anterior/siguiente, velocidad y tono con botones **−/+** de 0.1 en 0.1,
+  selector de voz y cerrar. En el popup, además, deslizadores con contadores.
 - **Voces neuronales gratis** 🌟 (motor Piper, open source): mucho más claras
   y humanas que las del sistema. Se descargan una sola vez (25–120 MB por
   voz) y después funcionan **sin conexión**. 7 voces en español (España y
@@ -24,8 +26,12 @@ Funciona con **una sola base de código** en Chrome, Brave, Chromium,
 - **Velocidad de 0.5× a 5×**: con las voces neuronales el 5× es real y sin
   voz de ardilla (se conserva el tono). Tono ajustable con las voces del
   sistema.
-- **PDFs**: se abren en un lector propio a pantalla completa con el mismo
-  resaltado por frase y palabra (extrae el texto con pdf.js de Mozilla).
+- **PDFs con su formato original**: el lector muestra el documento **como el
+  visor del navegador** (páginas renderizadas con pdf.js de Mozilla, tablas y
+  colores incluidos) y el resaltado de párrafo/oración/palabra se pinta
+  **sobre el propio documento**. Clic en cualquier frase del PDF para saltar.
+  Las páginas se renderizan según te acercas, para que los PDFs grandes no
+  consuman memoria de golpe.
 - **Español primero**: interfaz en español y selección automática de una voz
   en español si no has elegido ninguna.
 

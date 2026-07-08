@@ -185,15 +185,39 @@
     avisarSegunVoz();
   });
 
-  rangoVel.addEventListener('input', () => {
-    txtVel.textContent = Number(rangoVel.value).toFixed(1) + '×';
-    guardarConRetraso({ velocidad: parseFloat(rangoVel.value) });
-  });
+  /** Pinta la parte "llena" del slider (efecto de barra de progreso). */
+  function pintarRelleno(rango) {
+    const min = Number(rango.min);
+    const max = Number(rango.max);
+    const v = Number(rango.value);
+    rango.style.backgroundSize = ((v - min) * 100 / (max - min)) + '% 100%';
+  }
 
-  rangoTono.addEventListener('input', () => {
-    txtTono.textContent = Number(rangoTono.value).toFixed(1);
-    guardarConRetraso({ tono: parseFloat(rangoTono.value) });
-  });
+  /** Fija la velocidad (desde el slider o los botones −/+) y la guarda. */
+  function fijarVelocidad(v) {
+    v = Math.round(Math.min(5, Math.max(0.5, v)) * 10) / 10;
+    rangoVel.value = String(v);
+    txtVel.textContent = v.toFixed(1) + '×';
+    pintarRelleno(rangoVel);
+    guardarConRetraso({ velocidad: v });
+  }
+
+  /** Fija el tono (desde el slider o los botones −/+) y lo guarda. */
+  function fijarTono(v) {
+    v = Math.round(Math.min(2, Math.max(0.5, v)) * 10) / 10;
+    rangoTono.value = String(v);
+    txtTono.textContent = v.toFixed(1);
+    pintarRelleno(rangoTono);
+    guardarConRetraso({ tono: v });
+  }
+
+  rangoVel.addEventListener('input', () => fijarVelocidad(parseFloat(rangoVel.value)));
+  rangoTono.addEventListener('input', () => fijarTono(parseFloat(rangoTono.value)));
+  // Contadores de −/+ 0.1
+  document.getElementById('btn-vel-menos').addEventListener('click', () => fijarVelocidad(parseFloat(rangoVel.value) - 0.1));
+  document.getElementById('btn-vel-mas').addEventListener('click', () => fijarVelocidad(parseFloat(rangoVel.value) + 0.1));
+  document.getElementById('btn-tono-menos').addEventListener('click', () => fijarTono(parseFloat(rangoTono.value) - 0.1));
+  document.getElementById('btn-tono-mas').addEventListener('click', () => fijarTono(parseFloat(rangoTono.value) + 0.1));
 
   // ---- Botones ------------------------------------------------------------
 
@@ -211,8 +235,10 @@
     ajustes = Object.assign({}, AJUSTES_DEFECTO, guardados || {});
     rangoVel.value = String(ajustes.velocidad);
     txtVel.textContent = Number(ajustes.velocidad).toFixed(1) + '×';
+    pintarRelleno(rangoVel);
     rangoTono.value = String(ajustes.tono);
     txtTono.textContent = Number(ajustes.tono).toFixed(1);
+    pintarRelleno(rangoTono);
     poblarVoces();
   });
 

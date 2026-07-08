@@ -40,8 +40,10 @@
   const soportaHighlight =
     typeof Highlight === 'function' &&
     typeof CSS !== 'undefined' && CSS.highlights;
+  let hlParrafo = null;
   let hlOracion = null;
   let hlPalabra = null;
+  let parrafoActual = null; // límites del párrafo ya pintado (para no repintar)
 
   // ------------------------------------------------------------------
   // Ajustes: carga inicial y sincronización con el popup
@@ -51,12 +53,10 @@
 
   chrome.storage.onChanged.addListener((cambios, area) => {
     if (area !== 'sync') return;
-    if ('velocidad' in cambios) {
-      motor.fijarVelocidad(cambios.velocidad.newValue);
-      sincronizarVelocidadBarra();
-    }
+    if ('velocidad' in cambios) motor.fijarVelocidad(cambios.velocidad.newValue);
     if ('tono' in cambios) motor.fijarTono(cambios.tono.newValue);
     if ('vozNombre' in cambios) motor.fijarVoz(cambios.vozNombre.newValue);
+    sincronizarBarra(); // reflejar el cambio en la barrita si está abierta
   });
 
   // ------------------------------------------------------------------
@@ -178,8 +178,14 @@
   function prepararResaltado() {
     if (!soportaHighlight) return;
     if (!hlOracion) {
+      hlParrafo = new Highlight();
       hlOracion = new Highlight();
       hlPalabra = new Highlight();
+      // La palabra gana a la oración y la oración al párrafo.
+      hlParrafo.priority = 1;
+      hlOracion.priority = 2;
+      hlPalabra.priority = 3;
+      CSS.highlights.set('lector-tts-parrafo', hlParrafo);
       CSS.highlights.set('lector-tts-oracion', hlOracion);
       CSS.highlights.set('lector-tts-palabra', hlPalabra);
     }
@@ -187,6 +193,7 @@
       const estilos = document.createElement('style');
       estilos.id = '__lector-tts-estilos';
       estilos.textContent =
+        '::highlight(lector-tts-parrafo){background-color:rgba(108,92,255,.10);}' +
         '::highlight(lector-tts-oracion){background-color:rgba(108,92,255,.30);}' +
         '::highlight(lector-tts-palabra){background-color:#6c5cff;color:#fff;}';
       (document.head || document.documentElement).appendChild(estilos);
@@ -194,12 +201,25 @@
   }
 
   function limpiarResaltado() {
+    if (hlParrafo) hlParrafo.clear();
     if (hlOracion) hlOracion.clear();
     if (hlPalabra) hlPalabra.clear();
+    parrafoActual = null;
     if (usandoSeleccion) {
       try { window.getSelection().removeAllRanges(); } catch (e) { /* nada */ }
       usandoSeleccion = false;
     }
+  }
+
+  /** Límites del párrafo (entre cortes de bloque) que contiene la oración. */
+  function limitesParrafo(oracion) {
+    let ini = 0;
+    let fin = lectura.texto.length;
+    for (const c of (lectura.cortes || [])) {
+      if (c <= oracion.ini) ini = c;
+      if (c >= oracion.fin) { fin = c; break; }
+    }
+    return { ini, fin };
   }
 
   /** Busca el segmento del mapa que contiene la posición `pos`. */
@@ -263,6 +283,14 @@
     }
     if (!rango) return;
     if (soportaHighlight) {
+      // Párrafo (solo se repinta al cambiar de párrafo).
+      const lp = limitesParrafo(o);
+      if (!parrafoActual || lp.ini !== parrafoActual.ini || lp.fin !== parrafoActual.fin) {
+        hlParrafo.clear();
+        const rangoParrafo = crearRango(lp.ini, lp.fin);
+        if (rangoParrafo) hlParrafo.add(rangoParrafo);
+        parrafoActual = lp;
+      }
       hlPalabra.clear();
       hlOracion.clear();
       hlOracion.add(rango);
@@ -301,35 +329,53 @@
   // Barrita flotante de controles
   // ------------------------------------------------------------------
 
-  const VELOCIDADES = [0.5, 0.75, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3, 3.5, 4, 4.5, 5];
-
   const ESTILOS_BARRA = `
     * { box-sizing: border-box; margin: 0; padding: 0; }
     .barra {
-      display: flex; align-items: center; gap: 7px;
-      background: #1f1f28; color: #e9e9ef;
-      border: 1px solid #343442; border-radius: 999px;
-      padding: 8px 12px;
+      display: flex; flex-direction: column; gap: 7px;
+      background: rgba(26, 26, 34, .94);
+      backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+      color: #e9e9ef;
+      border: 1px solid #3a3a4e; border-radius: 16px;
+      padding: 10px 12px;
       font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
-      box-shadow: 0 8px 30px rgba(0,0,0,.45);
+      box-shadow: 0 10px 34px rgba(0, 0, 0, .5);
     }
+    .fila { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
     .btn {
-      appearance: none; border: 1px solid #343442; background: #262633;
+      appearance: none; border: 1px solid #3a3a4e; background: #2a2a38;
       color: #e9e9ef; border-radius: 999px; cursor: pointer;
       font-size: 14px; line-height: 1; padding: 8px 11px;
+      transition: background .15s;
     }
-    .btn:hover { background: #32323f; }
-    .btn-principal { background: #6c5cff; border-color: #6c5cff; font-size: 15px; padding: 8px 14px; }
-    .btn-principal:hover { background: #7d6fff; }
+    .btn:hover { background: #363648; }
+    .btn-principal {
+      background: linear-gradient(135deg, #7c5cff, #5a8bff);
+      border-color: transparent; font-size: 15px; padding: 8px 15px;
+    }
+    .btn-principal:hover { filter: brightness(1.12); }
     .btn-principal.atencion { animation: latido 1s infinite; }
     @keyframes latido { 50% { transform: scale(1.12); } }
     select {
-      appearance: none; border: 1px solid #343442; background: #262633;
-      color: #e9e9ef; border-radius: 999px; padding: 7px 9px;
-      font-size: 12px; cursor: pointer;
+      appearance: none; border: 1px solid #3a3a4e; background: #2a2a38;
+      color: #e9e9ef; border-radius: 10px; padding: 7px 9px;
+      font-size: 11.5px; cursor: pointer; max-width: 210px; flex: 1;
     }
-    .progreso { font-size: 11.5px; color: #9a9aac; min-width: 52px; text-align: center; }
-    .mensaje { font-size: 11.5px; color: #ffd9a8; max-width: 240px; }
+    .grupo {
+      display: flex; align-items: center; gap: 2px;
+      background: #2a2a38; border: 1px solid #3a3a4e;
+      border-radius: 999px; padding: 2px 5px;
+    }
+    .grupo .mini { font-size: 10px; color: #9a9aac; padding: 0 3px; }
+    .grupo button {
+      appearance: none; border: none; background: transparent; color: #e9e9ef;
+      font-size: 14px; font-weight: 700; cursor: pointer;
+      padding: 5px 7px; border-radius: 999px;
+    }
+    .grupo button:hover { background: #3a3a4e; }
+    .grupo .valor { font-size: 12px; font-weight: 650; color: #fff; min-width: 34px; text-align: center; }
+    .progreso { font-size: 11.5px; color: #9a9aac; min-width: 50px; text-align: center; margin-left: auto; }
+    .mensaje { font-size: 11.5px; color: #ffd9a8; max-width: 320px; }
     .mensaje:empty { display: none; }
   `;
 
@@ -339,18 +385,33 @@
     host.id = '__lector-tts-barra';
     host.style.cssText =
       'position:fixed;left:50%;bottom:18px;transform:translateX(-50%);' +
-      'z-index:2147483647;max-width:calc(100vw - 20px);';
+      'z-index:2147483647;max-width:calc(100vw - 16px);';
     const shadow = host.attachShadow({ mode: 'open' });
     shadow.innerHTML = `
       <style>${ESTILOS_BARRA}</style>
       <div class="barra">
-        <button class="btn btn-ant" title="Oración anterior">⏮</button>
-        <button class="btn btn-principal btn-pausa" title="Pausar / Reanudar">⏸</button>
-        <button class="btn btn-sig" title="Oración siguiente">⏭</button>
-        <select class="sel-vel" title="Velocidad de lectura"></select>
-        <span class="progreso"></span>
+        <div class="fila">
+          <button class="btn btn-ant" title="Oración anterior">⏮</button>
+          <button class="btn btn-principal btn-pausa" title="Pausar / Reanudar">⏸</button>
+          <button class="btn btn-sig" title="Oración siguiente">⏭</button>
+          <div class="grupo" title="Velocidad de lectura (0.5× a 5×)">
+            <button class="vel-menos">−</button>
+            <span class="valor val-vel">1.1×</span>
+            <button class="vel-mas">+</button>
+          </div>
+          <span class="progreso"></span>
+          <button class="btn btn-cerrar" title="Cerrar y detener">✕</button>
+        </div>
+        <div class="fila">
+          <select class="sel-voz" title="Voz"></select>
+          <div class="grupo" title="Tono (voces del sistema)">
+            <span class="mini">Tono</span>
+            <button class="tono-menos">−</button>
+            <span class="valor val-tono">1.0</span>
+            <button class="tono-mas">+</button>
+          </div>
+        </div>
         <span class="mensaje"></span>
-        <button class="btn btn-cerrar" title="Cerrar y detener">✕</button>
       </div>
     `;
     shadow.querySelector('.btn-cerrar').addEventListener('click', cerrarLectura);
@@ -363,37 +424,94 @@
       else if (motor.enPausa) motor.reanudar();
       else motor.pausar();
     });
-    const selVel = shadow.querySelector('.sel-vel');
-    selVel.addEventListener('change', () => {
-      LectorTTS.guardarAjustes({ velocidad: parseFloat(selVel.value) });
+
+    // Contadores de −/+ 0.1 para velocidad y tono. El cambio se guarda en
+    // chrome.storage y el "eco" lo aplica al motor (mismo camino que el popup).
+    shadow.querySelector('.vel-menos').addEventListener('click', () => pasoBarra('velocidad', -0.1, 0.5, 5));
+    shadow.querySelector('.vel-mas').addEventListener('click', () => pasoBarra('velocidad', 0.1, 0.5, 5));
+    shadow.querySelector('.tono-menos').addEventListener('click', () => pasoBarra('tono', -0.1, 0.5, 2));
+    shadow.querySelector('.tono-mas').addEventListener('click', () => pasoBarra('tono', 0.1, 0.5, 2));
+
+    const selVoz = shadow.querySelector('.sel-voz');
+    selVoz.addEventListener('change', () => {
+      LectorTTS.guardarAjustes({ vozNombre: selVoz.value });
     });
 
     (document.documentElement || document.body).appendChild(host);
     barra = {
       host,
       shadow,
-      selVel,
+      selVoz,
       btnPausa: shadow.querySelector('.btn-pausa'),
       progreso: shadow.querySelector('.progreso'),
-      mensaje: shadow.querySelector('.mensaje')
+      mensaje: shadow.querySelector('.mensaje'),
+      valVel: shadow.querySelector('.val-vel'),
+      valTono: shadow.querySelector('.val-tono')
     };
-    sincronizarVelocidadBarra();
+    poblarVocesBarra();
+    sincronizarBarra();
   }
 
-  function sincronizarVelocidadBarra() {
+  const timersPasoBarra = {};
+  function pasoBarra(clave, delta, minimo, maximo) {
+    const actual = Number(motor.ajustes[clave]) || 1;
+    const nuevo = Math.round(Math.min(maximo, Math.max(minimo, actual + delta)) * 10) / 10;
+    motor.ajustes[clave] = nuevo; // respuesta visual inmediata en pasos seguidos
+    sincronizarBarra();
+    clearTimeout(timersPasoBarra[clave]);
+    timersPasoBarra[clave] = setTimeout(() => {
+      LectorTTS.guardarAjustes({ [clave]: nuevo });
+    }, 250);
+  }
+
+  /** Refleja los ajustes actuales en la barrita. */
+  function sincronizarBarra() {
     if (!barra) return;
-    const vel = Number(motor.ajustes.velocidad) || 1.1;
-    const lista = VELOCIDADES.includes(vel)
-      ? VELOCIDADES
-      : VELOCIDADES.concat(vel).sort((a, b) => a - b);
-    barra.selVel.innerHTML = '';
-    for (const v of lista) {
+    barra.valVel.textContent = (Number(motor.ajustes.velocidad) || 1.1).toFixed(1) + '×';
+    barra.valTono.textContent = (Number(motor.ajustes.tono) || 1).toFixed(1);
+    barra.selVoz.value = motor.ajustes.vozNombre || '';
+    if (barra.selVoz.value !== (motor.ajustes.vozNombre || '')) barra.selVoz.value = '';
+  }
+
+  /** Rellena el selector de voz de la barrita (neuronales + sistema). */
+  function poblarVocesBarra() {
+    if (!barra) return;
+    const sel = barra.selVoz;
+    sel.innerHTML = '';
+    const auto = document.createElement('option');
+    auto.value = '';
+    auto.textContent = '✨ Voz automática (español)';
+    sel.appendChild(auto);
+
+    const grupoNeural = document.createElement('optgroup');
+    grupoNeural.label = '🌟 Neuronales (descarga única)';
+    for (const voz of LectorTTS.VOCES_NEURALES) {
       const op = document.createElement('option');
-      op.value = String(v);
-      op.textContent = v + '×';
-      barra.selVel.appendChild(op);
+      op.value = voz.id;
+      op.textContent = voz.etiqueta;
+      grupoNeural.appendChild(op);
     }
-    barra.selVel.value = String(vel);
+    sel.appendChild(grupoNeural);
+
+    const voces = LectorTTS.obtenerVoces();
+    const esEspanola = (v) => v.lang && v.lang.toLowerCase().startsWith('es');
+    const orden = (a, b) => a.lang.localeCompare(b.lang) || a.name.localeCompare(b.name);
+    const grupoSistema = document.createElement('optgroup');
+    grupoSistema.label = 'Voces del sistema';
+    for (const voz of voces.filter(esEspanola).sort(orden).concat(voces.filter((v) => !esEspanola(v)).sort(orden))) {
+      const op = document.createElement('option');
+      op.value = voz.name;
+      op.textContent = voz.name + ' (' + voz.lang + ')';
+      grupoSistema.appendChild(op);
+    }
+    if (grupoSistema.children.length) sel.appendChild(grupoSistema);
+  }
+
+  // Las voces del sistema llegan tarde en Chromium: repoblar cuando avisen.
+  if (window.speechSynthesis && typeof window.speechSynthesis.addEventListener === 'function') {
+    window.speechSynthesis.addEventListener('voiceschanged', () => {
+      if (barra) { poblarVocesBarra(); sincronizarBarra(); }
+    });
   }
 
   let temporizadorMensaje = null;
@@ -510,7 +628,7 @@
       .filter((r) => rec.texto.slice(r.ini, r.fin).trim());
     if (!rangos.length) return false;
     limpiarResaltado();
-    lectura = { texto: rec.texto, mapa: rec.mapa, oraciones: rangos };
+    lectura = { texto: rec.texto, mapa: rec.mapa, oraciones: rangos, cortes: rec.cortes };
     prepararResaltado();
     crearBarra();
     mensajeBarra('');
@@ -548,7 +666,7 @@
       const rangos = LectorTTS.trocearRangos(respaldo, []);
       if (!rangos.length) return false;
       limpiarResaltado();
-      lectura = { texto: respaldo, mapa: [], oraciones: rangos };
+      lectura = { texto: respaldo, mapa: [], oraciones: rangos, cortes: [] };
       crearBarra();
       motor.iniciar(rangos.map((r) => respaldo.slice(r.ini, r.fin)), 0);
       return true;
