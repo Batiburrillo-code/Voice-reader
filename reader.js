@@ -20,6 +20,11 @@
 import * as pdfjsLib from './libs/pdf.mjs';
 // Motor neuronal Piper (parcheado para cargar su WASM desde libs/neural/).
 import * as vits from './libs/neural/vits-web.js';
+import { registrarVocesExtra } from './voces-extra.js';
+
+// Añade al catálogo las voces que no están en el mirror por defecto (la
+// argentina es_AR-daniela, que vive en el repo oficial de Piper).
+registrarVocesExtra(vits);
 
 // El "worker" de pdf.js debe cargarse desde DENTRO de la extensión.
 pdfjsLib.GlobalWorkerOptions.workerSrc = chrome.runtime.getURL('libs/pdf.worker.mjs');
@@ -38,15 +43,25 @@ const inputArchivo = document.getElementById('input-archivo');
 const selVoz = document.getElementById('sel-voz');
 const txtVel = document.getElementById('txt-vel');
 const txtTono = document.getElementById('txt-tono');
+const grupoTono = document.getElementById('grupo-tono');
+const btnTonoMenos = document.getElementById('btn-tono-menos');
+const btnTonoMas = document.getElementById('btn-tono-mas');
 
 // Motor de lectura compartido (speech-engine.js ya se cargó como script clásico).
 const motor = LectorTTS.crearMotorLectura();
 
 // Enchufar la síntesis neuronal directamente (esta página ya puede con WASM).
-motor.sintetizarNeural = (texto, idVoz, alProgreso) =>
-  vits.predict({ text: String(texto || ' '), voiceId: idVoz }, (p) => {
-    if (alProgreso) alProgreso({ cargado: p.loaded || 0, total: p.total || 0 });
-  });
+// Las síntesis se encadenan una tras otra: así nunca hay dos inferencias a la
+// vez sobre la misma sesión ONNX (que ahora se cachea y reutiliza).
+let colaNeural = Promise.resolve();
+motor.sintetizarNeural = (texto, idVoz, alProgreso) => {
+  const r = colaNeural.then(() => vits.predict(
+    { text: String(texto || ' '), voiceId: idVoz },
+    (p) => { if (alProgreso) alProgreso({ cargado: p.loaded || 0, total: p.total || 0 }); }
+  ));
+  colaNeural = r.catch(() => {}); // el fallo de una síntesis no debe romper la cola
+  return r;
+};
 
 // Estado del documento abierto (o null):
 // { texto, mapa, oraciones, cortes, textos, porNodo }
@@ -258,11 +273,41 @@ function ocultarEstado() {
 function pintarVel(v) { txtVel.textContent = Number(v).toFixed(1) + '×'; }
 function pintarTono(v) { txtTono.textContent = Number(v).toFixed(1); }
 
+/**
+ * Activa o desactiva (en gris) el control de tono según la voz elegida: las
+ * voces neuronales Piper no admiten cambio de tono, solo de velocidad.
+ */
+function reflejarTono() {
+  const permite = LectorTTS.soportaTono(motor.ajustes.vozNombre);
+  btnTonoMenos.disabled = !permite;
+  btnTonoMas.disabled = !permite;
+  if (grupoTono) {
+    grupoTono.classList.toggle('desactivado', !permite);
+    grupoTono.title = permite
+      ? 'Tono de la voz (voces del sistema)'
+      : 'Las voces neuronales no permiten cambiar el tono (solo la velocidad)';
+  }
+}
+
+// Pre-calentado del motor neuronal: la primera lectura con una voz Piper
+// arranca "en frío" (carga del WASM + lectura del modelo). Sintetizamos un
+// texto mínimo al abrir (y al cambiar de voz) para que al pulsar ▶ suene ya.
+let vozCalentada = null;
+function calentarNeural() {
+  const v = motor.ajustes.vozNombre;
+  if (!LectorTTS.esVozNeural(v) || vozCalentada === v) return;
+  vozCalentada = v;
+  vits.predict({ text: 'a', voiceId: LectorTTS.idPiper(v) }, () => {})
+    .catch(() => { vozCalentada = null; }); // si falla, se reintenta al leer
+}
+
 LectorTTS.cargarAjustes((ajustes) => {
   motor.ajustes = ajustes;
   pintarVel(ajustes.velocidad);
   pintarTono(ajustes.tono);
+  reflejarTono();
   poblarVoces();
+  calentarNeural();
 });
 // La preferencia de auto-encuadre se guarda aparte (por defecto: libre).
 try {
@@ -285,6 +330,9 @@ chrome.storage.onChanged.addListener((cambios, area) => {
   if ('vozNombre' in cambios) {
     motor.fijarVoz(cambios.vozNombre.newValue);
     selVoz.value = cambios.vozNombre.newValue || '';
+    reflejarTono();
+    vozCalentada = null;   // voz nueva: precalentarla otra vez
+    calentarNeural();
   }
   if ('seguirPdf' in cambios) {
     seguirLectura = !!cambios.seguirPdf.newValue;

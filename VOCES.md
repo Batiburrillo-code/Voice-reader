@@ -10,7 +10,7 @@ implementación, manteniéndola en un rango razonable.
 
 | Opción | Calidad* | Español | Velocidad en CPU | Tamaño | Licencia | Veredicto |
 |---|---|---|---|---|---|---|
-| **Piper (elegida)** | ★★★★ (MOS ≈ 3.8–4.0) | ✅ 7 voces (ES y MX) | ✅ 3–5× tiempo real, sin GPU | 25–120 MB por voz | MIT | **Integrada en v1.1** |
+| **Piper (elegida)** | ★★★★ (MOS ≈ 3.8–4.0) | ✅ 8 voces (España, México, Argentina) | ✅ 3–5× tiempo real, sin GPU | 25–120 MB por voz | MIT | **Integrada en v1.1** |
 | Kokoro 82M | ★★★★★ (MOS ≈ 4.3–4.5) | ⚠️ pocas voces, menos pulido que en inglés | ⚠️ 0.8–1× en CPU (necesita WebGPU para ir fluida) | ~86–330 MB | Apache 2.0 | Candidata para una v2 |
 | Kitten TTS | ★★★ (MOS ≈ 3.2–3.5) | ❌ solo inglés | ✅ rápida | 24 MB | Apache 2.0 | Descartada (sin español) |
 | eSpeak-NG | ★ (robótica) | ✅ | ✅✅ | 3 MB | GPL | Descartada (peor que las voces del sistema) |
@@ -26,8 +26,11 @@ implementación, manteniéndola en un rango razonable.
 2. **…es la única de alta calidad que va sobrada de velocidad en cualquier
    PC**: 3–5× tiempo real solo con CPU (WASM). Kokoro sin tarjeta gráfica
    compatible con WebGPU baja a menos de tiempo real, lo que causaría cortes.
-3. **Español de verdad**: 7 voces (5 de España, 2 de México), incluida una de
-   calidad "high" (es_MX-claude-high).
+3. **Español de verdad**: 8 voces —español latino (2 de México y 1 de
+   Argentina) y 5 de España—, incluidas dos de calidad "high"
+   (es_MX-claude-high y es_AR-daniela-high). Además, 7 voces en inglés
+   (EE. UU. y Reino Unido). La argentina se descarga del repositorio oficial
+   de Piper (rhasspy); el resto, del mirror de vits-web (ver `libs/LEEME.md`).
 4. **Licencia MIT** y modelos abiertos publicados por el proyecto Rhasspy.
 5. **Implementación razonable**: existe un puerto a navegador mantenido
    ([vits-web](https://github.com/diffusionstudio/vits-web), MIT) que usa

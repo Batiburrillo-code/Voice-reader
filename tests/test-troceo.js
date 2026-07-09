@@ -6,7 +6,7 @@ const path = require('path');
 const rutaMotor = path.join(__dirname, '..', 'speech-engine.js');
 eval(fs.readFileSync(rutaMotor, 'utf8')); // define globalThis.LectorTTS (sin window ni chrome)
 
-const { trocearEnOraciones, trocearRangos, esVozNeural, idPiper } = globalThis.LectorTTS;
+const { trocearEnOraciones, trocearRangos, esVozNeural, idPiper, soportaTono, VOCES_NEURALES } = globalThis.LectorTTS;
 let fallos = 0;
 
 function caso(nombre, texto, comprobaciones) {
@@ -109,6 +109,33 @@ const okNeural = esVozNeural('piper:es_ES-davefx-medium') === true
   && idPiper('piper:es_MX-claude-high') === 'es_MX-claude-high';
 console.log((okNeural ? '✓' : '✗') + ' utilidades esVozNeural/idPiper');
 if (!okNeural) fallos++;
+
+// 11. soportaTono: las voces neuronales NO admiten tono; las del sistema sí
+const okTono = soportaTono('piper:es_MX-claude-high') === false
+  && soportaTono('piper:es_AR-daniela-high') === false
+  && soportaTono('Microsoft Helena') === true
+  && soportaTono('') === true;
+console.log((okTono ? '✓' : '✗') + ' soportaTono (neuronal=no, sistema=sí)');
+if (!okTono) fallos++;
+
+// 12. Catálogo de voces neuronales: ids bien formados y voces latinas presentes
+const ids = VOCES_NEURALES.map(v => v.id);
+const okVoces = VOCES_NEURALES.every(v => v.id.startsWith('piper:') && typeof v.etiqueta === 'string' && v.etiqueta.length > 0)
+  && new Set(ids).size === ids.length                       // sin duplicados
+  && ids.includes('piper:es_MX-claude-high')                // México
+  && ids.includes('piper:es_MX-ald-medium')                 // México
+  && ids.includes('piper:es_AR-daniela-high')               // Argentina (latino, vía rhasspy)
+  && ids.filter(id => id.startsWith('piper:en_')).length >= 5; // varias en inglés
+console.log((okVoces ? '✓' : '✗') + ` catálogo VOCES_NEURALES (${ids.length} voces, sin duplicados)`);
+if (!okVoces) fallos++;
+
+// 13. voces-extra.js registra la voz argentina que no está en el mirror
+const vocesExtra = fs.readFileSync(path.join(__dirname, '..', 'voces-extra.js'), 'utf8');
+const okExtra = vocesExtra.includes("'es_AR-daniela-high'")
+  && vocesExtra.includes('rhasspy/piper-voices/resolve/main')
+  && vocesExtra.includes('registrarVocesExtra');
+console.log((okExtra ? '✓' : '✗') + ' voces-extra.js registra es_AR-daniela desde rhasspy');
+if (!okExtra) fallos++;
 
 console.log(fallos === 0 ? '\nTODAS LAS PRUEBAS PASAN ✓' : `\n${fallos} COMPROBACIONES FALLAN ✗`);
 process.exit(fallos === 0 ? 0 : 1);

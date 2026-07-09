@@ -176,11 +176,29 @@ function b(e, m, n) {
   return i.buffer;
 }
 let h, _;
+// [Parche 5 — Lector TTS] Caché de la sesión ONNX y de la configuración por voz.
+// La librería original creaba una InferenceSession nueva (leer el modelo de
+// ~60 MB de OPFS y parsear su grafo) en CADA frase, lo que retrasaba el
+// arranque. Ahora se reutilizan, así la lectura empieza casi al instante. Es
+// seguro porque quien llama serializa las síntesis (la cola del iframe
+// tts-frame.js y la de reader.js), de modo que nunca hay dos run() a la vez
+// sobre la misma sesión.
+const _SES = new Map(), _CFG = new Map();
+async function G(id, ruta) {            // configuración .json (cacheada)
+  let i = _CFG.get(id);
+  if (!i) { const a = await f(`${u}/${ruta}.json`); i = JSON.parse(await a.text()); _CFG.set(id, i); }
+  return i;
+}
+async function V(id, ruta, prog) {      // InferenceSession del modelo (cacheada)
+  let y = _SES.get(id);
+  if (!y) { const k = await f(`${u}/${ruta}`, prog); y = await _.InferenceSession.create(await k.arrayBuffer()); _SES.set(id, y); }
+  return y;
+}
 async function N(e, m) {
   h = h ?? await import("./piper-DeOu3H9E.js"), _ = _ ?? await import("./ort.min.js");
   const n = c[e.voiceId], o = JSON.stringify([{ text: e.text.trim() }]);
   _.env.allowLocalModels = !1, _.env.wasm.numThreads = 1, _.env.wasm.wasmPaths = B;
-  const a = await f(`${u}/${n}.json`), i = JSON.parse(await a.text()), t = await new Promise(async (v) => {
+  const i = await G(e.voiceId, n), t = await new Promise(async (v) => {
     (await h.createPiperPhonemize({
       print: (l) => {
         v(JSON.parse(l).phoneme_ids);
@@ -197,7 +215,7 @@ async function N(e, m) {
       "--espeak_data",
       "/espeak-ng-data"
     ]);
-  }), r = 0, s = i.audio.sample_rate, d = i.inference.noise_scale, g = i.inference.length_scale, U = i.inference.noise_w, k = await f(`${u}/${n}`, m), y = await _.InferenceSession.create(await k.arrayBuffer()), w = {
+  }), r = 0, s = i.audio.sample_rate, d = i.inference.noise_scale, g = i.inference.length_scale, U = i.inference.noise_w, y = await V(e.voiceId, n, m), w = {
     input: new _.Tensor("int64", t, [1, t.length]),
     input_lengths: new _.Tensor("int64", [t.length]),
     scales: new _.Tensor("float32", [d, g, U])

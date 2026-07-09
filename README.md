@@ -21,11 +21,13 @@ Funciona con **una sola base de código** en Chrome, Brave, Chromium,
   selector de voz y cerrar. En el popup, además, deslizadores con contadores.
 - **Voces neuronales gratis** 🌟 (motor Piper, open source): mucho más claras
   y humanas que las del sistema. Se descargan una sola vez (25–120 MB por
-  voz) y después funcionan **sin conexión**. 7 voces en español (España y
-  México) + 1 en inglés. Detalles de la investigación en [VOCES.md](VOCES.md).
+  voz) y después funcionan **sin conexión**. 8 voces en español —latino
+  (México y Argentina) y de España— + 7 en inglés (EE. UU. y Reino Unido).
+  Detalles de la investigación en [VOCES.md](VOCES.md).
 - **Velocidad de 0.5× a 5×**: con las voces neuronales el 5× es real y sin
-  voz de ardilla (se conserva el tono). Tono ajustable con las voces del
-  sistema.
+  voz de ardilla (se conserva el tono). El **tono** solo se ajusta con las
+  voces del sistema; con una voz neuronal el control aparece en gris (esas
+  voces no admiten cambio de tono, solo de velocidad).
 - **PDFs con su formato original**: el lector muestra el documento **como el
   visor del navegador** (páginas renderizadas con pdf.js de Mozilla, tablas y
   colores incluidos) y el resaltado de párrafo/oración/palabra se pinta
@@ -38,6 +40,20 @@ Funciona con **una sola base de código** en Chrome, Brave, Chromium,
   **🧭 Libre / 🎯 Siguiendo** de la barra. En las páginas web es al revés
   (sigue por defecto) y se cambia con el mismo botón 🎯/🧭 de la barrita.
   La preferencia queda guardada.
+- **Leer al hacer clic** 👆: activa el botón «Leer al hacer clic» (en el popup
+  o en la barrita) y luego **toca cualquier texto de la página** para que
+  empiece a leerse desde ahí — sin subrayar ni menús. Y **`Alt`+clic** funciona
+  siempre, sin activar nada. Además, como lees justo lo que tocas, funciona
+  también en páginas donde el modo «leer toda la página» se dejaba contenido.
+- **Arranque instantáneo**: la primera lectura con una voz neuronal solía
+  tardar un par de segundos (el motor arrancaba «en frío» y recreaba el modelo
+  en cada frase). Ahora se **pre-calienta** al abrir la página o elegir la voz
+  y **reutiliza el modelo ya cargado**, así al pulsar ▶ —o al tocar un
+  párrafo— empieza a leer de inmediato.
+- **Barra de controles movible y plegable**: **arrástrala por el asa ⠿** para
+  ponerla donde mejor te venga (la posición se guarda), y **al hacer clic fuera
+  de ella se contrae** a una pastilla pequeña para no estorbar; tócala para
+  volver a abrirla.
 - **Pausa instantánea**: el botón ⏸ corta la voz en el acto (y al reanudar,
   las voces del sistema retoman desde el principio de la frase).
 - **Español primero**: interfaz en español y selección automática de una voz
@@ -101,6 +117,7 @@ gratis:
 | Quiero…                        | Hago…                                                      |
 |--------------------------------|------------------------------------------------------------|
 | Leer un artículo entero        | Icono 🔊 → **▶ Leer página**                               |
+| Leer tocando el texto          | Activo **👆 Leer al hacer clic** (popup o barrita) y toco el párrafo · o **Alt+clic** sin activar nada |
 | Leer solo un trozo             | Selecciono el texto → clic derecho → **🔊 Leer selección** (o **Alt+L**) |
 | Pausar / seguir                | Botón **⏯** de la barrita flotante o del popup             |
 | Saltar de frase                | Botones **⏮ / ⏭**, o clic directamente sobre la frase en el texto |
@@ -156,6 +173,7 @@ Voice-reader/
 ├── manifest.json        # configuración de la extensión (Manifest V3, multiplataforma)
 ├── background.js        # menú contextual, atajo Alt+L y enrutado de mensajes
 ├── speech-engine.js     # motor de voz compartido: troceo, cola, voces sistema+Piper
+├── voces-extra.js       # registra voces Piper que no están en el mirror por defecto
 ├── content.js           # resaltado sobre el texto de la página + barrita flotante
 ├── tts-frame.html/.js   # iframe oculto que sintetiza las voces neuronales
 ├── popup.html/.js       # controles (voz, velocidad, tono, transporte)
