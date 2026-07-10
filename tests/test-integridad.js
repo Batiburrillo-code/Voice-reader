@@ -73,6 +73,14 @@ if (/cdn\.jsdelivr|cdnjs\.cloudflare|import\("onnxruntime-web"\)/.test(vits)) {
 } else {
   console.log('✓ vits-web.js parcheado: sin CDNs (solo modelos de Hugging Face)');
 }
+// El parche 5 (caché de la sesión ONNX por voz) debe seguir presente: sin él,
+// el arranque de la lectura vuelve a ser lento. Ver libs/LEEME.md.
+if (/_SES\s*=\s*new Map\(\)/.test(vits) && /InferenceSession\.create/.test(vits)) {
+  console.log('✓ vits-web.js con caché de sesión ONNX (arranque rápido)');
+} else {
+  console.log('✗ falta el parche de caché de sesión en vits-web.js (arranque lento)');
+  fallos++;
+}
 // El CSP debe permitir WASM en las páginas de la extensión
 if (!/wasm-unsafe-eval/.test(JSON.stringify(manifest.content_security_policy || {}))) {
   console.log('✗ falta wasm-unsafe-eval en el CSP del manifest'); fallos++;

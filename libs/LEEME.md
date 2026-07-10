@@ -35,10 +35,35 @@ CSP de MV3 prohíbe):
 3. `import("onnxruntime-web")` (especificador de bundler) → `import("./ort.min.js")`.
 4. `numThreads = navigator.hardwareConcurrency` → `numThreads = 1` (el modo
    multihilo exige cabeceras COOP/COEP que las páginas de extensión no tienen).
+5. **Caché de la sesión ONNX y de la configuración por voz** (`_SES`/`_CFG` y
+   las funciones `G`/`V` junto a `predict`): la versión original creaba una
+   `InferenceSession` nueva —leer el modelo de OPFS y parsear su grafo— en
+   CADA frase, lo que retrasaba el arranque de la lectura. Ahora se reutilizan,
+   así empezar a leer es casi instantáneo. Es seguro porque quien sintetiza
+   serializa las peticiones (la cola de `tts-frame.js` y la de `reader.js`), de
+   modo que nunca hay dos `run()` a la vez sobre la misma sesión.
 
 Los **modelos de voz** (`.onnx`, 25–120 MB) NO van en el repositorio: se
 descargan de Hugging Face (`diffusionstudio/piper-voices`) la primera vez que
 se usa cada voz y quedan cacheados en el navegador (OPFS).
+
+### Voces fuera del mirror por defecto (sin tocar la librería)
+
+El mirror `diffusionstudio/piper-voices` solo aloja un subconjunto de voces
+(las 119 de su catálogo interno). Algunas voces oficiales de Piper no están
+ahí; la argentina **`es_AR-daniela-high`** (español latino, `es-419`) es un
+ejemplo: vive en el repositorio OFICIAL `rhasspy/piper-voices`, del que aquel
+es copia.
+
+Para añadirla **sin editar `vits-web.js`**, el archivo `voces-extra.js` (en la
+raíz del proyecto) inyecta su ruta en el catálogo exportado (`PATH_MAP`) usando
+una ruta con `../` que sube desde el mirror hasta el origen de Hugging Face y
+baja a `rhasspy` (la librería arma la URL como `${HF_BASE}/ruta` y `fetch`
+normaliza los `../`). Lo llaman `tts-frame.js` (páginas web) y `reader.js`
+(lector de PDF). Si la descarga fallara, el motor recae en una voz del sistema,
+así que el resto de voces no corre ningún riesgo. Para sumar más voces de
+rhasspy basta con añadir su id y ruta a `VOCES_RHASSPY` en `voces-extra.js` y
+su etiqueta a `VOCES_NEURALES` en `speech-engine.js`.
 
 ## Nota
 

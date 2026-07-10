@@ -49,7 +49,7 @@
   // Ajustes: carga inicial y sincronización con el popup
   // ------------------------------------------------------------------
 
-  LectorTTS.cargarAjustes((ajustes) => { motor.ajustes = ajustes; });
+  LectorTTS.cargarAjustes((ajustes) => { motor.ajustes = ajustes; calentarNeural(); });
 
   // Auto-encuadre en páginas web: por defecto SÍ sigue la lectura (se puede
   // apagar desde la barrita; la preferencia queda guardada).
@@ -61,14 +61,63 @@
     });
   } catch (e) { /* nada */ }
 
+  // "Leer al hacer clic": si está activo, un clic normal en el texto empieza a
+  // leer desde ahí (y Alt+clic funciona SIEMPRE, esté activo o no). Se guarda
+  // aparte, como la preferencia de auto-encuadre.
+  let clicParaLeer = false;
+  try {
+    chrome.storage.sync.get({ clicParaLeer: false }, (r) => {
+      clicParaLeer = !!r.clicParaLeer;
+      reflejarClicBarra();
+    });
+  } catch (e) { /* nada */ }
+
+  // Pre-calentado del motor neuronal. La PRIMERA lectura con una voz Piper
+  // arranca "en frío" (crear el iframe + cargar el WASM + leer el modelo): eso
+  // son los "un par de segundos" de espera. Lo dejamos listo en cuanto el
+  // usuario interactúa con la página (si tiene una voz neuronal elegida), para
+  // que al pulsar ▶ empiece a sonar al instante.
+  let interactuado = false;   // ¿el usuario ya tocó la página?
+  let vozCalentada = null;    // voz neuronal ya precalentada
+  // Con `forzar` calienta aunque no se haya tocado la página (p. ej. al elegir
+  // una voz nueva en el popup, que es señal clara de que se va a usar).
+  function calentarNeural(forzar) {
+    const v = motor.ajustes.vozNombre;
+    if ((!forzar && !interactuado) || !LectorTTS.esVozNeural(v) || vozCalentada === v) return;
+    vozCalentada = v;
+    try {
+      motor.sintetizarNeural('a', LectorTTS.idPiper(v), null)
+        .catch(() => { vozCalentada = null; }); // si falla, se reintenta al leer
+    } catch (e) { vozCalentada = null; }
+  }
+  function alPrimeraInteraccion() {
+    window.removeEventListener('pointerdown', alPrimeraInteraccion, true);
+    window.removeEventListener('scroll', alPrimeraInteraccion, true);
+    window.removeEventListener('keydown', alPrimeraInteraccion, true);
+    interactuado = true;
+    calentarNeural(); // si los ajustes aún no cargaron, se calentará al cargar
+  }
+  window.addEventListener('pointerdown', alPrimeraInteraccion, true);
+  window.addEventListener('scroll', alPrimeraInteraccion, true);
+  window.addEventListener('keydown', alPrimeraInteraccion, true);
+
   chrome.storage.onChanged.addListener((cambios, area) => {
     if (area !== 'sync') return;
     if ('velocidad' in cambios) motor.fijarVelocidad(cambios.velocidad.newValue);
     if ('tono' in cambios) motor.fijarTono(cambios.tono.newValue);
-    if ('vozNombre' in cambios) motor.fijarVoz(cambios.vozNombre.newValue);
+    if ('vozNombre' in cambios) {
+      motor.fijarVoz(cambios.vozNombre.newValue);
+      vozCalentada = null;   // voz nueva: hay que precalentarla de nuevo
+      calentarNeural(true);  // el usuario acaba de elegirla: prepárala ya
+    }
     if ('seguirWeb' in cambios) {
       seguirLectura = !!cambios.seguirWeb.newValue;
       pintarSeguirBarra();
+    }
+    if ('clicParaLeer' in cambios) {
+      clicParaLeer = !!cambios.clicParaLeer.newValue;
+      reflejarClicBarra();
+      if (clicParaLeer) toast('👆 Toca el texto que quieras escuchar');
     }
     sincronizarBarra(); // reflejar el cambio en la barrita si está abierta
   });
@@ -365,6 +414,24 @@
       font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
       box-shadow: 0 10px 34px rgba(0, 0, 0, .5);
     }
+    /* Asa para arrastrar la barra (y para reabrirla cuando está contraída). */
+    .asa {
+      display: flex; align-items: center; justify-content: center;
+      cursor: grab; user-select: none; touch-action: none;
+      color: #7a7a90; font-size: 16px; line-height: 1;
+      margin: -4px 0 0; padding: 2px;
+    }
+    .asa:active { cursor: grabbing; }
+    .asa-grip { pointer-events: none; }
+    /* Contraída: solo se ven ⏮ ⏸ ⏭ (y el asa para mover / volver a abrir). */
+    .barra.contraida { padding: 6px 10px; }
+    .barra.contraida .fila-2,
+    .barra.contraida .mensaje,
+    .barra.contraida .grupo,
+    .barra.contraida .progreso,
+    .barra.contraida .btn-cerrar { display: none; }
+    .barra.contraida .fila { justify-content: center; }
+    .barra.contraida .asa { cursor: pointer; }
     .fila { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
     .btn {
       appearance: none; border: 1px solid #3a3a4e; background: #2a2a38;
@@ -373,6 +440,11 @@
       transition: background .15s;
     }
     .btn:hover { background: #363648; }
+    .btn.activo {
+      background: linear-gradient(135deg, #7c5cff, #5a8bff);
+      border-color: transparent; color: #fff;
+    }
+    .btn.activo:hover { filter: brightness(1.12); background: linear-gradient(135deg, #7c5cff, #5a8bff); }
     .btn-principal {
       background: linear-gradient(135deg, #7c5cff, #5a8bff);
       border-color: transparent; font-size: 15px; padding: 8px 15px;
@@ -398,6 +470,9 @@
     }
     .grupo button:hover { background: #3a3a4e; }
     .grupo .valor { font-size: 12px; font-weight: 650; color: #fff; min-width: 34px; text-align: center; }
+    .grupo.desactivado { opacity: .4; }
+    .grupo.desactivado button { cursor: not-allowed; }
+    .grupo.desactivado button:hover { background: transparent; }
     .progreso { font-size: 11.5px; color: #9a9aac; min-width: 50px; text-align: center; margin-left: auto; }
     .mensaje { font-size: 11.5px; color: #ffd9a8; max-width: 320px; }
     .mensaje:empty { display: none; }
@@ -414,6 +489,10 @@
     shadow.innerHTML = `
       <style>${ESTILOS_BARRA}</style>
       <div class="barra">
+        <div class="asa" title="Arrastra para mover la barra · se contrae al hacer clic fuera · tócala para abrir todos los controles">
+          <span class="asa-grip">⠿</span>
+        </div>
+        <div class="contenido">
         <div class="fila">
           <button class="btn btn-ant" title="Oración anterior">⏮</button>
           <button class="btn btn-principal btn-pausa" title="Pausar / Reanudar">⏸</button>
@@ -426,17 +505,20 @@
           <span class="progreso"></span>
           <button class="btn btn-cerrar" title="Cerrar y detener">✕</button>
         </div>
-        <div class="fila">
+        <div class="fila fila-2">
           <select class="sel-voz" title="Voz"></select>
-          <div class="grupo" title="Tono (voces del sistema)">
+          <div class="grupo grupo-tono" title="Tono (voces del sistema)">
             <span class="mini">Tono</span>
             <button class="tono-menos">−</button>
             <span class="valor val-tono">1.0</span>
             <button class="tono-mas">+</button>
           </div>
+          <button class="btn btn-clic" title="Leer al hacer clic">👆</button>
           <button class="btn btn-seguir" title="Auto-encuadre de la lectura">🎯</button>
         </div>
         <span class="mensaje"></span>
+        </div>
+        <!-- fin .contenido -->
       </div>
     `;
     shadow.querySelector('.btn-cerrar').addEventListener('click', cerrarLectura);
@@ -459,7 +541,15 @@
 
     const selVoz = shadow.querySelector('.sel-voz');
     selVoz.addEventListener('change', () => {
+      // El eco de storage.onChanged aplica la voz al motor y llama a
+      // sincronizarBarra(), que ya refleja el estado del control de tono.
       LectorTTS.guardarAjustes({ vozNombre: selVoz.value });
+    });
+
+    // Interruptor de "leer al hacer clic". El eco de storage.onChanged
+    // actualiza el estado, el botón y muestra el aviso (camino único).
+    shadow.querySelector('.btn-clic').addEventListener('click', () => {
+      LectorTTS.guardarAjustes({ clicParaLeer: !clicParaLeer });
     });
 
     // Interruptor de auto-encuadre: 🎯 la vista sigue a la lectura /
@@ -476,16 +566,26 @@
       host,
       shadow,
       selVoz,
+      asa: shadow.querySelector('.asa'),
+      contraida: false,
+      creadaEn: Date.now(),
       btnPausa: shadow.querySelector('.btn-pausa'),
       btnSeguir: shadow.querySelector('.btn-seguir'),
+      btnClic: shadow.querySelector('.btn-clic'),
       progreso: shadow.querySelector('.progreso'),
       mensaje: shadow.querySelector('.mensaje'),
       valVel: shadow.querySelector('.val-vel'),
-      valTono: shadow.querySelector('.val-tono')
+      valTono: shadow.querySelector('.val-tono'),
+      grupoTono: shadow.querySelector('.grupo-tono'),
+      btnTonoMenos: shadow.querySelector('.tono-menos'),
+      btnTonoMas: shadow.querySelector('.tono-mas')
     };
+    hacerArrastrable(host, barra.asa);
+    aplicarPosicionBarra(host);
     poblarVocesBarra();
     sincronizarBarra();
     pintarSeguirBarra();
+    reflejarClicBarra();
   }
 
   /** Refleja el estado del auto-encuadre en su botón de la barrita. */
@@ -496,6 +596,128 @@
       ? 'La vista sigue a la lectura. Clic para navegar libremente.'
       : 'Navegación libre. Clic para que la vista siga a la lectura.';
   }
+
+  /** Refleja el estado del "leer al hacer clic" en su botón de la barrita. */
+  function reflejarClicBarra() {
+    if (!barra || !barra.btnClic) return;
+    barra.btnClic.classList.toggle('activo', clicParaLeer);
+    barra.btnClic.title = clicParaLeer
+      ? 'Leer al hacer clic: ACTIVADO. Toca cualquier texto para leerlo. Clic aquí para desactivarlo.'
+      : 'Leer al hacer clic: apagado. Actívalo y toca un texto para escucharlo (o usa Alt+clic sin activar nada).';
+  }
+
+  // Aviso flotante breve (p. ej. al activar "leer al hacer clic"). No usa la
+  // barrita porque puede no existir todavía.
+  let toastEl = null;
+  let toastTimer = null;
+  function toast(texto) {
+    try {
+      if (!toastEl) {
+        toastEl = document.createElement('div');
+        toastEl.id = '__lector-tts-toast';
+        toastEl.style.cssText =
+          'position:fixed;left:50%;top:16px;transform:translateX(-50%);' +
+          'z-index:2147483647;background:#23232e;color:#fff;border:1px solid #7c5cff;' +
+          'border-radius:10px;padding:9px 14px;font:600 13px/1.3 system-ui,sans-serif;' +
+          'box-shadow:0 6px 22px rgba(0,0,0,.45);pointer-events:none;max-width:calc(100vw - 24px);';
+      }
+      toastEl.textContent = texto;
+      (document.documentElement || document.body).appendChild(toastEl);
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => { if (toastEl) toastEl.remove(); }, 4000);
+    } catch (e) { /* nada */ }
+  }
+
+  // ---- Arrastrar y contraer la barrita -------------------------------------
+
+  /** Posiciona la barra a mano (izquierda/arriba en píxeles). */
+  function colocarBarra(host, left, top) {
+    host.style.left = left + 'px';
+    host.style.top = top + 'px';
+    host.style.bottom = 'auto';
+    host.style.transform = 'none';
+  }
+
+  /** La mantiene dentro de la pantalla (tras mover, contraer o expandir). */
+  function ajustarDentroDePantalla(host) {
+    if (!host.style.left || host.style.left === 'auto') return; // sigue centrada por defecto
+    requestAnimationFrame(() => {
+      const r = host.getBoundingClientRect();
+      const l = Math.max(4, Math.min(r.left, window.innerWidth - r.width - 4));
+      const t = Math.max(4, Math.min(r.top, window.innerHeight - r.height - 4));
+      colocarBarra(host, l, t);
+    });
+  }
+
+  /** Restaura la posición guardada de la barra (si la hay). */
+  function aplicarPosicionBarra(host) {
+    try {
+      chrome.storage.sync.get({ posBarra: null }, (r) => {
+        const p = r && r.posBarra;
+        if (!p || !barra || barra.host !== host) return;
+        const rect = host.getBoundingClientRect();
+        const left = Math.max(4, Math.min(p.left, window.innerWidth - rect.width - 4));
+        const top = Math.max(4, Math.min(p.top, window.innerHeight - rect.height - 4));
+        colocarBarra(host, left, top);
+      });
+    } catch (e) { /* nada */ }
+  }
+
+  /** Hace la barra arrastrable tirando de su asa (⠿). */
+  function hacerArrastrable(host, asa) {
+    if (!asa) return;
+    let activo = false, movido = false;
+    let sx = 0, sy = 0, ox = 0, oy = 0;
+    asa.addEventListener('pointerdown', (ev) => {
+      if (ev.pointerType === 'mouse' && ev.button !== 0) return;
+      const r = host.getBoundingClientRect();
+      ox = r.left; oy = r.top; sx = ev.clientX; sy = ev.clientY;
+      activo = true; movido = false;
+      try { asa.setPointerCapture(ev.pointerId); } catch (e) { /* nada */ }
+      ev.preventDefault();
+    });
+    asa.addEventListener('pointermove', (ev) => {
+      if (!activo) return;
+      const dx = ev.clientX - sx, dy = ev.clientY - sy;
+      if (!movido && Math.abs(dx) + Math.abs(dy) < 4) return; // umbral: clic vs arrastre
+      movido = true;
+      const r = host.getBoundingClientRect();
+      const l = Math.max(4, Math.min(ox + dx, window.innerWidth - r.width - 4));
+      const t = Math.max(4, Math.min(oy + dy, window.innerHeight - r.height - 4));
+      colocarBarra(host, l, t);
+    });
+    function soltar(ev) {
+      if (!activo) return;
+      activo = false;
+      try { asa.releasePointerCapture(ev.pointerId); } catch (e) { /* nada */ }
+      if (movido) {
+        const r = host.getBoundingClientRect();
+        LectorTTS.guardarAjustes({ posBarra: { left: Math.round(r.left), top: Math.round(r.top) } });
+      } else if (barra && barra.contraida) {
+        colapsarBarra(false); // un toque sin arrastrar reabre la barra contraída
+      }
+    }
+    asa.addEventListener('pointerup', soltar);
+    asa.addEventListener('pointercancel', soltar);
+  }
+
+  /** Contrae (true) o expande (false) la barra. */
+  function colapsarBarra(contraer) {
+    if (!barra) return;
+    barra.contraida = !!contraer;
+    const b = barra.shadow.querySelector('.barra');
+    if (b) b.classList.toggle('contraida', barra.contraida);
+    ajustarDentroDePantalla(barra.host);
+  }
+
+  // Al hacer clic FUERA de la barra, se contrae para no ocupar espacio.
+  document.addEventListener('click', (ev) => {
+    if (!barra || barra.contraida) return;
+    if (ev.target === barra.host) return; // clic dentro (el shadow re-apunta al host)
+    if (ev.target && ev.target.id && String(ev.target.id).startsWith('__lector-tts')) return;
+    if (Date.now() - (barra.creadaEn || 0) < 500) return; // no con el clic que la creó
+    colapsarBarra(true);
+  }, true);
 
   const timersPasoBarra = {};
   function pasoBarra(clave, delta, minimo, maximo) {
@@ -520,6 +742,24 @@
     barra.valTono.textContent = (Number(motor.ajustes.tono) || 1).toFixed(1);
     barra.selVoz.value = motor.ajustes.vozNombre || '';
     if (barra.selVoz.value !== (motor.ajustes.vozNombre || '')) barra.selVoz.value = '';
+    reflejarTonoBarra();
+  }
+
+  /**
+   * Activa o desactiva (en gris) el control de tono de la barrita: las voces
+   * neuronales Piper no admiten cambio de tono, solo de velocidad.
+   */
+  function reflejarTonoBarra() {
+    if (!barra) return;
+    const permite = LectorTTS.soportaTono(motor.ajustes.vozNombre);
+    barra.btnTonoMenos.disabled = !permite;
+    barra.btnTonoMas.disabled = !permite;
+    if (barra.grupoTono) {
+      barra.grupoTono.classList.toggle('desactivado', !permite);
+      barra.grupoTono.title = permite
+        ? 'Tono (voces del sistema)'
+        : 'Las voces neuronales no permiten cambiar el tono (solo la velocidad)';
+    }
   }
 
   /** Rellena el selector de voz de la barrita (neuronales + sistema). */
@@ -671,17 +911,26 @@
   // Arranque y control de lecturas
   // ------------------------------------------------------------------
 
-  /** Prepara y arranca la lectura a partir de una recolección. */
-  function iniciarLectura(rec) {
+  /**
+   * Prepara y arranca la lectura a partir de una recolección.
+   * `posicionInicio` (opcional) es una posición dentro de rec.texto: la lectura
+   * empieza en la oración que la contiene (se usa al leer al hacer clic).
+   */
+  function iniciarLectura(rec, posicionInicio) {
     const rangos = LectorTTS.trocearRangos(rec.texto, rec.cortes)
       .filter((r) => rec.texto.slice(r.ini, r.fin).trim());
     if (!rangos.length) return false;
+    let desde = 0;
+    if (posicionInicio != null) {
+      const j = rangos.findIndex((o) => posicionInicio >= o.ini && posicionInicio < o.fin);
+      if (j >= 0) desde = j;
+    }
     limpiarResaltado();
     lectura = { texto: rec.texto, mapa: rec.mapa, oraciones: rangos, cortes: rec.cortes };
     prepararResaltado();
     crearBarra();
     mensajeBarra('');
-    motor.iniciar(rangos.map((r) => rec.texto.slice(r.ini, r.fin)), 0);
+    motor.iniciar(rangos.map((r) => rec.texto.slice(r.ini, r.fin)), desde);
     return true;
   }
 
@@ -741,34 +990,103 @@
     lectura = null;
   }
 
-  // Clic en una oración resaltable = saltar a ella (solo mientras se lee).
-  document.addEventListener('click', (ev) => {
-    if (!lectura || !motor.leyendo || !lectura.mapa.length) return;
-    if (ev.target && ev.target.id && String(ev.target.id).startsWith('__lector-tts')) return;
-    // ¿Dónde cayó el clic dentro del texto total?
-    let posicion = null;
+  // ---- Leer al hacer clic / saltar por clic --------------------------------
+
+  /** Nodo de texto y offset donde cayó un clic (o {nodo:null}). */
+  function nodoOffsetDeClic(ev) {
+    let nodo = null;
+    let offset = 0;
     const cr = document.caretRangeFromPoint
       ? document.caretRangeFromPoint(ev.clientX, ev.clientY)
       : null;
-    let nodoClic = null;
-    let offsetClic = 0;
     if (cr) {
-      nodoClic = cr.startContainer;
-      offsetClic = cr.startOffset;
+      nodo = cr.startContainer;
+      offset = cr.startOffset;
     } else if (document.caretPositionFromPoint) {
       const cp = document.caretPositionFromPoint(ev.clientX, ev.clientY);
-      if (cp) { nodoClic = cp.offsetNode; offsetClic = cp.offset; }
+      if (cp) { nodo = cp.offsetNode; offset = cp.offset; }
     }
-    if (!nodoClic || nodoClic.nodeType !== Node.TEXT_NODE) return;
-    for (const seg of lectura.mapa) {
-      if (seg.nodo === nodoClic && offsetClic >= seg.desde && offsetClic <= seg.hasta) {
-        posicion = seg.ini + (offsetClic - seg.desde);
-        break;
+    return { nodo, offset };
+  }
+
+  /** Posición dentro del texto recolectado de (nodo, offset), o null. */
+  function posicionEnMapa(mapa, nodo, offset) {
+    for (const seg of mapa) {
+      if (seg.nodo === nodo && offset >= seg.desde && offset <= seg.hasta) {
+        return seg.ini + (offset - seg.desde);
       }
     }
-    if (posicion === null) return;
-    const idx = lectura.oraciones.findIndex((o) => posicion >= o.ini && posicion < o.fin);
-    if (idx >= 0) motor.saltarA(idx);
+    return null;
+  }
+
+  /** ¿El clic cayó sobre algo "usable" (enlace, botón, campo…)? */
+  function esInteractivo(nodo) {
+    let el = nodo && (nodo.nodeType === Node.ELEMENT_NODE ? nodo : nodo.parentElement);
+    for (; el; el = el.parentElement) {
+      const t = el.tagName;
+      if (t === 'A' || t === 'BUTTON' || t === 'INPUT' || t === 'SELECT' ||
+          t === 'TEXTAREA' || t === 'LABEL' || t === 'SUMMARY') return true;
+      if (el.isContentEditable) return true;
+      const rol = el.getAttribute && el.getAttribute('role');
+      if (rol === 'button' || rol === 'link' || rol === 'menuitem' || rol === 'tab') return true;
+    }
+    return false;
+  }
+
+  /** Recolecta la página y empieza a leer desde donde se hizo clic. */
+  function leerDesdeClic(nodo, offset) {
+    // Raíz que CONTENGA el nodo clicado; si el modo "página" lo dejaría fuera,
+    // recolectamos todo el cuerpo (así se lee incluso en páginas "difíciles").
+    let raiz = elegirRaiz();
+    if (!raiz.contains(nodo)) raiz = document.body;
+    let rec = recolectar(raiz, null, true);
+    let posicion = posicionEnMapa(rec.mapa, nodo, offset);
+    if (posicion === null) {
+      rec = recolectar(document.body, null, false);
+      posicion = posicionEnMapa(rec.mapa, nodo, offset);
+    }
+    return iniciarLectura(rec, posicion === null ? undefined : posicion);
+  }
+
+  // Precedencia de un clic sobre texto:
+  //   (1) Alt+clic → leer desde ahí SIEMPRE (gesto deliberado, incluso enlaces).
+  //   (2) Mientras se lee → saltar a la frase tocada (solo texto no interactivo).
+  //   (3) Modo "leer al clic" → empezar a leer desde ahí (solo texto no interactivo).
+  // Fuera de esos casos, el clic sigue su curso normal en la página.
+  document.addEventListener('click', (ev) => {
+    if (ev.target && ev.target.id && String(ev.target.id).startsWith('__lector-tts')) return;
+
+    const alt = !!ev.altKey;
+    const leyendoConMapa = lectura && motor.leyendo && lectura.mapa.length;
+    if (!alt && !clicParaLeer && !leyendoConMapa) return;
+
+    const { nodo, offset } = nodoOffsetDeClic(ev);
+    if (!nodo || nodo.nodeType !== Node.TEXT_NODE || !nodo.data || !nodo.data.trim()) return;
+
+    // (1) Alt+clic: leer desde ahí, aunque sea un enlace o un botón.
+    if (alt) {
+      ev.preventDefault(); ev.stopPropagation();
+      leerDesdeClic(nodo, offset);
+      return;
+    }
+
+    // Sin Alt, NO tocamos enlaces/botones/campos: la página sigue usable.
+    if (esInteractivo(nodo)) return;
+
+    // (2) Ya leyendo: saltar a la frase tocada si cae en el texto en curso.
+    if (leyendoConMapa) {
+      const pos = posicionEnMapa(lectura.mapa, nodo, offset);
+      if (pos !== null) {
+        const idx = lectura.oraciones.findIndex((o) => pos >= o.ini && pos < o.fin);
+        if (idx >= 0) { ev.preventDefault(); ev.stopPropagation(); motor.saltarA(idx); return; }
+      }
+    }
+
+    // (3) Modo "leer al clic": empezar a leer desde donde se tocó.
+    if (clicParaLeer) {
+      ev.preventDefault(); ev.stopPropagation();
+      leerDesdeClic(nodo, offset);
+    }
   }, true);
 
   // ------------------------------------------------------------------

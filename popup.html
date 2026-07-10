@@ -57,6 +57,12 @@
       width: 13px; height: 13px; border-radius: 50%;
       background: #fff; border: 3px solid #7c5cff; cursor: pointer;
     }
+    /* Control desactivado (p. ej. el tono con una voz neuronal): gris e inútil */
+    input[type="range"]:disabled { opacity: .4; cursor: not-allowed; }
+    .paso:disabled { opacity: .4; cursor: not-allowed; }
+    .paso:disabled:hover { background: #262633; }
+    .fila-slider.desactivado output { opacity: .4; }
+    label.desactivado { opacity: .55; }
 
     .botones { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 15px; }
     button {
@@ -73,6 +79,9 @@
     .primario:hover { filter: brightness(1.12); }
     .transporte { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 8px; }
     .transporte button { font-size: 15px; padding: 9px 4px; }
+    #btn-clic { margin-top: 8px; width: 100%; }
+    button.activo { background: linear-gradient(135deg, #7c5cff, #5a8bff); border-color: transparent; color: #fff; }
+    button.activo:hover { filter: brightness(1.12); }
     #btn-pdf, #btn-permisos { display: none; margin-top: 8px; width: 100%; }
     #btn-pdf { background: linear-gradient(135deg, #e2574a, #b3453a); border-color: transparent; color: #fff; }
     #btn-pdf:hover { filter: brightness(1.1); }
@@ -107,9 +116,10 @@
     <output id="txt-vel">1.1×</output>
   </div>
 
-  <!-- Tono de la voz (voces del sistema), con contadores -->
-  <label for="rango-tono">Tono <span style="color:#6e6e80">(voces del sistema)</span></label>
-  <div class="fila-slider">
+  <!-- Tono de la voz (voces del sistema), con contadores. Se desactiva en gris
+       al elegir una voz neuronal, que no admite cambio de tono. -->
+  <label for="rango-tono" id="lbl-tono">Tono <span style="color:#6e6e80">(voces del sistema)</span></label>
+  <div class="fila-slider" id="fila-tono">
     <button class="paso" id="btn-tono-menos" title="Bajar 0.1">−</button>
     <input type="range" id="rango-tono" min="0.5" max="2" step="0.1" value="1">
     <button class="paso" id="btn-tono-mas" title="Subir 0.1">+</button>
@@ -130,6 +140,10 @@
     <button id="btn-siguiente" title="Oración siguiente">⏭</button>
   </div>
 
+  <!-- Modo "leer al hacer clic": al activarlo, en la página basta tocar un
+       texto para leerlo desde ahí (o usa Alt+clic sin activar nada). -->
+  <button id="btn-clic">👆 Leer al hacer clic</button>
+
   <!-- Solo aparece si la pestaña actual es un PDF -->
   <button id="btn-pdf">📄 Leer este PDF en el lector</button>
 
@@ -139,7 +153,7 @@
   <div id="estado"></div>
 
   <div class="pie">
-    Atajo: <kbd>Alt</kbd>+<kbd>L</kbd> lee la selección · Clic derecho → «🔊 Leer selección»
+    Atajos: <kbd>Alt</kbd>+<kbd>L</kbd> lee la selección · <kbd>Alt</kbd>+clic en un texto lo lee desde ahí · Clic derecho → «🔊 Leer selección»
   </div>
 
   <script src="speech-engine.js"></script>

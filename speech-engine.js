@@ -35,20 +35,45 @@
 
   // Voces neuronales Piper disponibles (se descargan de Hugging Face la
   // primera vez y quedan guardadas en el navegador; después van sin conexión).
+  // Ordenadas por región: español latino primero (México, según lo pedido),
+  // luego español de España y por último inglés.
+  // NOTA: la voz argentina "es_AR-daniela-high" no está en el mirror por
+  // defecto de vits-web; se registra aparte en tts-frame.js y reader.js
+  // apuntando al repositorio oficial de Piper (rhasspy). Ver libs/LEEME.md.
   const VOCES_NEURALES = [
-    { id: 'piper:es_MX-claude-high',        etiqueta: 'Claude · Español (México) · calidad alta' },
-    { id: 'piper:es_MX-ald-medium',         etiqueta: 'Ald · Español (México) · calidad media' },
-    { id: 'piper:es_ES-davefx-medium',      etiqueta: 'Davefx · Español (España) · calidad media' },
-    { id: 'piper:es_ES-sharvard-medium',    etiqueta: 'Sharvard · Español (España) · calidad media' },
+    // --- Español de Latinoamérica ---
+    { id: 'piper:es_MX-claude-high',        etiqueta: 'Claude · Español latino (México) · alta' },
+    { id: 'piper:es_MX-ald-medium',         etiqueta: 'Ald · Español latino (México) · media' },
+    { id: 'piper:es_AR-daniela-high',       etiqueta: 'Daniela · Español latino (Argentina) · alta' },
+    // --- Español de España ---
+    { id: 'piper:es_ES-davefx-medium',      etiqueta: 'Davefx · Español (España) · media' },
+    { id: 'piper:es_ES-sharvard-medium',    etiqueta: 'Sharvard · Español (España) · media' },
     { id: 'piper:es_ES-mls_10246-low',      etiqueta: 'MLS 10246 · Español (España) · ligera' },
     { id: 'piper:es_ES-mls_9972-low',       etiqueta: 'MLS 9972 · Español (España) · ligera' },
     { id: 'piper:es_ES-carlfm-x_low',       etiqueta: 'Carlfm · Español (España) · muy ligera' },
-    { id: 'piper:en_US-hfc_female-medium',  etiqueta: 'HFC Female · Inglés (EE. UU.) · media' }
+    // --- Inglés (EE. UU. y Reino Unido) ---
+    { id: 'piper:en_US-amy-medium',         etiqueta: 'Amy · Inglés (EE. UU.) · media' },
+    { id: 'piper:en_US-hfc_female-medium',  etiqueta: 'HFC Female · Inglés (EE. UU.) · media' },
+    { id: 'piper:en_US-hfc_male-medium',    etiqueta: 'HFC Male · Inglés (EE. UU.) · media' },
+    { id: 'piper:en_US-ryan-high',          etiqueta: 'Ryan · Inglés (EE. UU.) · alta' },
+    { id: 'piper:en_US-lessac-medium',      etiqueta: 'Lessac · Inglés (EE. UU.) · media' },
+    { id: 'piper:en_GB-alan-medium',        etiqueta: 'Alan · Inglés (Reino Unido) · media' },
+    { id: 'piper:en_GB-jenny_dioco-medium', etiqueta: 'Jenny · Inglés (Reino Unido) · media' }
   ];
 
   /** ¿Es un nombre de voz neuronal ("piper:...")? */
   function esVozNeural(nombre) {
     return typeof nombre === 'string' && nombre.startsWith('piper:');
+  }
+
+  /**
+   * ¿Esta voz permite ajustar el TONO?
+   * Solo las voces del sistema: las neuronales Piper ignoran el tono (únicamente
+   * cambian de velocidad), por eso la interfaz desactiva el control de tono
+   * cuando hay una voz neuronal elegida.
+   */
+  function soportaTono(nombre) {
+    return !esVozNeural(nombre);
   }
 
   /** Saca el id Piper de un nombre "piper:es_ES-davefx-medium". */
@@ -624,6 +649,7 @@
     AJUSTES_DEFECTO: AJUSTES_DEFECTO,
     VOCES_NEURALES: VOCES_NEURALES,
     esVozNeural: esVozNeural,
+    soportaTono: soportaTono,
     idPiper: idPiper,
     trocearRangos: trocearRangos,
     trocearEnOraciones: trocearEnOraciones,

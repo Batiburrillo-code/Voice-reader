@@ -17,6 +17,10 @@
   const txtVel = document.getElementById('txt-vel');
   const rangoTono = document.getElementById('rango-tono');
   const txtTono = document.getElementById('txt-tono');
+  const btnTonoMenos = document.getElementById('btn-tono-menos');
+  const btnTonoMas = document.getElementById('btn-tono-mas');
+  const filaTono = document.getElementById('fila-tono');
+  const lblTono = document.getElementById('lbl-tono');
   const btnLeerPagina = document.getElementById('btn-leer-pagina');
   const btnLeerSeleccion = document.getElementById('btn-leer-seleccion');
   const btnPausa = document.getElementById('btn-pausa');
@@ -25,6 +29,7 @@
   const btnSiguiente = document.getElementById('btn-siguiente');
   const btnPdf = document.getElementById('btn-pdf');
   const btnPermisos = document.getElementById('btn-permisos');
+  const btnClic = document.getElementById('btn-clic');
   const divEstado = document.getElementById('estado');
 
   const AJUSTES_DEFECTO = { vozNombre: '', velocidad: 1.1, tono: 1.0 };
@@ -153,16 +158,31 @@
     if (selVoz.value !== (ajustes.vozNombre || '')) selVoz.value = '';
 
     avisarSegunVoz();
+    reflejarTono();
   }
 
   /** Pistas según la voz elegida y las voces disponibles. */
   function avisarSegunVoz() {
     if (LectorTTS.esVozNeural(selVoz.value)) {
-      mostrarAviso('Voz neuronal: la primera vez se descarga el modelo (25–120 MB según la voz). Después funciona sin conexión.');
+      mostrarAviso('Voz neuronal: la primera vez se descarga el modelo (25–120 MB según la voz). Después funciona sin conexión. (No permite ajustar el tono, solo la velocidad.)');
     } else if (!(speechSynthesis.getVoices() || []).length) {
       // Opera GX y otros Chromium sin voces del sistema.
       mostrarAviso('Tu navegador no trae voces del sistema (pasa en Opera GX): elige una voz 🌟 neuronal y listo.', true);
     }
+  }
+
+  /**
+   * Activa o desactiva (en gris) el control de tono según la voz elegida: las
+   * voces neuronales Piper no admiten cambio de tono, solo de velocidad.
+   */
+  function reflejarTono() {
+    const permite = LectorTTS.soportaTono(selVoz.value);
+    rangoTono.disabled = !permite;
+    btnTonoMenos.disabled = !permite;
+    btnTonoMas.disabled = !permite;
+    filaTono.classList.toggle('desactivado', !permite);
+    lblTono.classList.toggle('desactivado', !permite);
+    lblTono.title = permite ? '' : 'Las voces neuronales no permiten cambiar el tono (solo la velocidad).';
   }
 
   // En Chromium getVoices() devuelve [] al abrir: repoblar cuando avisen.
@@ -183,6 +203,7 @@
     chrome.storage.sync.set({ vozNombre: selVoz.value });
     mostrarAviso('');
     avisarSegunVoz();
+    reflejarTono();
   });
 
   /** Pinta la parte "llena" del slider (efecto de barra de progreso). */
@@ -216,8 +237,8 @@
   // Contadores de −/+ 0.1
   document.getElementById('btn-vel-menos').addEventListener('click', () => fijarVelocidad(parseFloat(rangoVel.value) - 0.1));
   document.getElementById('btn-vel-mas').addEventListener('click', () => fijarVelocidad(parseFloat(rangoVel.value) + 0.1));
-  document.getElementById('btn-tono-menos').addEventListener('click', () => fijarTono(parseFloat(rangoTono.value) - 0.1));
-  document.getElementById('btn-tono-mas').addEventListener('click', () => fijarTono(parseFloat(rangoTono.value) + 0.1));
+  btnTonoMenos.addEventListener('click', () => fijarTono(parseFloat(rangoTono.value) - 0.1));
+  btnTonoMas.addEventListener('click', () => fijarTono(parseFloat(rangoTono.value) + 0.1));
 
   // ---- Botones ------------------------------------------------------------
 
@@ -227,6 +248,25 @@
   btnDetener.addEventListener('click', () => mandar('detener'));
   btnAnterior.addEventListener('click', () => mandar('anterior'));
   btnSiguiente.addEventListener('click', () => mandar('siguiente'));
+
+  // ---- "Leer al hacer clic" (interruptor) --------------------------------
+  let clicParaLeer = false;
+  function reflejarClic() {
+    btnClic.classList.toggle('activo', clicParaLeer);
+    btnClic.textContent = clicParaLeer ? '👆 Leer al hacer clic: ACTIVADO' : '👆 Leer al hacer clic';
+    btnClic.title = clicParaLeer
+      ? 'Activado: en la página, toca cualquier texto para leerlo desde ahí. Pulsa aquí para desactivar.'
+      : 'Actívalo y luego toca un texto en la página para escucharlo (o usa Alt+clic sin activar nada).';
+  }
+  btnClic.addEventListener('click', () => {
+    clicParaLeer = !clicParaLeer;
+    chrome.storage.sync.set({ clicParaLeer });
+    reflejarClic();
+  });
+  chrome.storage.sync.get({ clicParaLeer: false }, (r) => {
+    clicParaLeer = !!r.clicParaLeer;
+    reflejarClic();
+  });
 
   // ---- Arranque -------------------------------------------------------------
 

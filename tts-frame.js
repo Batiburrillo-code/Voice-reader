@@ -14,6 +14,11 @@
  */
 
 import * as vits from './libs/neural/vits-web.js';
+import { registrarVocesExtra } from './voces-extra.js';
+
+// Añade al catálogo de vits-web las voces que no están en su mirror por defecto
+// (p. ej. la argentina es_AR-daniela, que vive en el repo oficial de Piper).
+registrarVocesExtra(vits);
 
 // Las síntesis se encadenan una tras otra: el runtime ONNX rinde mejor sin
 // peticiones simultáneas y así el orden de las oraciones queda garantizado.
