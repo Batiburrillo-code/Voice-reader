@@ -34,6 +34,15 @@ Funciona con **una sola base de código** en Chrome, Brave, Chromium,
   **sobre el propio documento**. Clic en cualquier frase del PDF para saltar.
   Las páginas se renderizan según te acercas, para que los PDFs grandes no
   consuman memoria de golpe.
+- **Panel lateral para moverte por el PDF** ☰: con **🖼️ Páginas** ves una
+  miniatura de cada hoja —la que estás viendo aparece resaltada en todo
+  momento— y con **🔖 Índice** los capítulos y apartados del documento (si el
+  PDF los trae), plegables y con el apartado actual marcado. Pulsa cualquiera
+  para saltar allí. El panel se abre y cierra con el botón ☰ y arriba siempre
+  ves en qué página estás (p. ej. «3 / 12»).
+- **No lee la morralla de las páginas**: los **números de página**, las
+  **cabeceras** y los **pies** se detectan y se saltan, para que la voz no
+  interrumpa una frase con un «17» ni repita el título del libro en cada hoja.
 - **Navegación libre mientras lee** 🧭: en el PDF, por defecto la vista NO te
   persigue — puedes hojear el documento tranquilamente mientras la voz sigue
   leyendo. Si quieres que la vista acompañe a la lectura, pulsa el botón
@@ -125,6 +134,7 @@ gratis:
 | Voz mucho más humana           | Popup → Voz → grupo **🌟 Neuronales** (espera la descarga la 1ª vez) |
 | Leer un PDF                    | Abro el PDF en una pestaña → icono 🔊 → **📄 Leer este PDF** |
 | Leer un PDF de mi disco        | Lector de PDF → **📂 Abrir PDF…**                          |
+| Moverme por un PDF largo       | Botón **☰** → **🖼️ Páginas** (miniaturas) o **🔖 Índice** (capítulos) |
 
 > **Truco:** si al usar una voz neuronal el navegador muestra «Pulsa ▶ para
 > escuchar», es la protección anti-autoplay del navegador: un clic y a leer.

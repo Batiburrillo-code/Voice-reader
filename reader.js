@@ -46,6 +46,14 @@ const txtTono = document.getElementById('txt-tono');
 const grupoTono = document.getElementById('grupo-tono');
 const btnTonoMenos = document.getElementById('btn-tono-menos');
 const btnTonoMas = document.getElementById('btn-tono-mas');
+// Panel lateral: miniaturas de páginas e índice del documento.
+const elPanel = document.getElementById('panel');
+const btnPanel = document.getElementById('btn-panel');
+const tabMiniaturas = document.getElementById('tab-miniaturas');
+const tabIndice = document.getElementById('tab-indice');
+const elListaMini = document.getElementById('lista-miniaturas');
+const elListaIndice = document.getElementById('lista-indice');
+const elPagActual = document.getElementById('pag-actual');
 
 // Motor de lectura compartido (speech-engine.js ya se cargó como script clásico).
 const motor = LectorTTS.crearMotorLectura();
@@ -478,6 +486,494 @@ async function pintarCanvas(divPag) {
   }
 }
 
+// ---- Panel lateral: miniaturas de páginas e índice del documento -------------
+//
+// Dos vistas intercambiables, como en cualquier lector de PDF:
+//   🖼️ Páginas → una miniatura por hoja, con la que estás viendo resaltada.
+//   🔖 Índice  → los marcadores del PDF (capítulos y apartados), si los trae.
+// Las dos navegan al pulsar, y el panel se puede ocultar (queda guardado).
+
+const ANCHO_MINI = 168;      // ancho en píxeles de cada miniatura
+let pdfDoc = null;           // documento pdf.js abierto ahora mismo
+const paginasDom = [];       // div de cada página del visor, en orden
+const paginasInfo = [];      // {page, viewport} de cada página
+const miniaturas = [];       // botón de miniatura de cada página
+let topsPaginas = [];        // posición vertical de cada página (para saber cuál se ve)
+let paginaActual = -1;       // índice 0-based de la página visible
+let indicePlano = [];        // entradas del índice en orden: {fila, dest, pagina}
+
+/** 'auto' si el usuario pide menos animación; si no, desplazamiento suave. */
+function comportamientoScroll() {
+  try {
+    return window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth';
+  } catch (e) {
+    return 'smooth';
+  }
+}
+
+// --- Mostrar u ocultar el panel ---
+
+function pintarPanel(abierto) {
+  elPanel.classList.toggle('oculto', !abierto);
+  btnPanel.setAttribute('aria-expanded', abierto ? 'true' : 'false');
+  btnPanel.title = abierto
+    ? 'Ocultar el panel de páginas'
+    : 'Mostrar el panel de páginas (miniaturas e índice)';
+}
+
+btnPanel.addEventListener('click', () => {
+  const abrir = elPanel.classList.contains('oculto');
+  pintarPanel(abrir);
+  LectorTTS.guardarAjustes({ panelPdf: abrir });
+  if (abrir) irAMiniaturaActual(true);
+});
+
+// Preferencias del panel. La primera vez se abre solo si hay sitio de sobra.
+try {
+  chrome.storage.sync.get({ panelPdf: null, panelVista: 'miniaturas' }, (r) => {
+    // Si aún no hay preferencia, se abre solo cuando hay sitio de sobra.
+    const ancho = window.innerWidth || document.documentElement.clientWidth || 1200;
+    const abierto = (r && r.panelPdf !== null && r.panelPdf !== undefined)
+      ? !!r.panelPdf
+      : ancho > 900;
+    pintarPanel(abierto);
+    cambiarVista(r && r.panelVista === 'indice' ? 'indice' : 'miniaturas', false);
+  });
+} catch (e) {
+  pintarPanel(true);
+}
+
+// --- Pestañas: Páginas / Índice ---
+
+function cambiarVista(vista, guardar) {
+  const esIndice = vista === 'indice';
+  tabMiniaturas.setAttribute('aria-selected', esIndice ? 'false' : 'true');
+  tabIndice.setAttribute('aria-selected', esIndice ? 'true' : 'false');
+  elListaMini.classList.toggle('oculto', esIndice);
+  elListaIndice.classList.toggle('oculto', !esIndice);
+  if (guardar !== false) LectorTTS.guardarAjustes({ panelVista: vista });
+  if (!esIndice) irAMiniaturaActual(true);
+}
+
+tabMiniaturas.addEventListener('click', () => cambiarVista('miniaturas'));
+tabIndice.addEventListener('click', () => cambiarVista('indice'));
+
+// Flechas ← → para cambiar de pestaña con el teclado.
+for (const tab of [tabMiniaturas, tabIndice]) {
+  tab.addEventListener('keydown', (ev) => {
+    if (ev.key !== 'ArrowLeft' && ev.key !== 'ArrowRight') return;
+    ev.preventDefault();
+    const otra = tab === tabMiniaturas ? tabIndice : tabMiniaturas;
+    cambiarVista(otra === tabIndice ? 'indice' : 'miniaturas');
+    otra.focus();
+  });
+}
+
+// --- Miniaturas (se pintan solo cuando se acercan, de una en una) ---
+
+const infoMini = new Map();        // botón → {page, viewport}
+let colaMini = Promise.resolve();  // cola: una miniatura cada vez, sin atascar el PDF
+
+const observadorMini = new IntersectionObserver((entradas) => {
+  for (const entrada of entradas) {
+    if (!entrada.isIntersecting) continue;
+    observadorMini.unobserve(entrada.target);
+    const boton = entrada.target;
+    colaMini = colaMini.then(() => pintarMiniatura(boton)).catch(() => { /* ya se reintenta */ });
+  }
+}, { root: elListaMini, rootMargin: '400px' });
+
+/** Crea la miniatura (vacía) de una página; se pinta al acercarse. */
+function crearMiniatura(page, vp1, numero) {
+  const viewport = page.getViewport({ scale: ANCHO_MINI / vp1.width });
+  const boton = document.createElement('button');
+  boton.className = 'mini';
+  boton.title = 'Ir a la página ' + numero;
+  boton.setAttribute('aria-label', 'Ir a la página ' + numero);
+
+  const marco = document.createElement('span');
+  marco.className = 'marco';
+  marco.style.width = Math.round(viewport.width) + 'px';
+  marco.style.height = Math.round(viewport.height) + 'px';
+
+  const num = document.createElement('span');
+  num.className = 'num';
+  num.textContent = String(numero);
+
+  boton.appendChild(marco);
+  boton.appendChild(num);
+  boton.addEventListener('click', () => irAPagina(numero - 1));
+  elListaMini.appendChild(boton);
+
+  miniaturas.push(boton);
+  infoMini.set(boton, { page, viewport });
+  observadorMini.observe(boton);
+}
+
+async function pintarMiniatura(boton) {
+  const info = infoMini.get(boton);
+  if (!info || boton.dataset.pintada) return;
+  boton.dataset.pintada = '1';
+  const canvas = document.createElement('canvas');
+  // 1.5× basta para que se vea nítida sin gastar el doble de memoria que 2×.
+  const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
+  canvas.width = Math.floor(info.viewport.width * dpr);
+  canvas.height = Math.floor(info.viewport.height * dpr);
+  try {
+    await info.page.render({
+      canvasContext: canvas.getContext('2d'),
+      viewport: info.viewport,
+      transform: dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : null
+    }).promise;
+    const marco = boton.querySelector('.marco');
+    if (marco) marco.appendChild(canvas);
+    observadorSoltar.observe(boton);   // vigilar para liberarla si se aleja
+  } catch (e) {
+    delete boton.dataset.pintada;      // si vuelve a acercarse, se reintenta
+    observadorMini.observe(boton);
+  }
+}
+
+// Con PDFs de cientos de páginas, guardar TODAS las miniaturas pintadas se
+// comería la memoria: las que quedan muy lejos de la vista se sueltan y se
+// vuelven a pintar solas si el usuario regresa.
+const observadorSoltar = new IntersectionObserver((entradas) => {
+  for (const entrada of entradas) {
+    if (!entrada.isIntersecting) soltarMiniatura(entrada.target);
+  }
+}, { root: elListaMini, rootMargin: '1200px' });
+
+function soltarMiniatura(boton) {
+  if (!boton.dataset.pintada) return;
+  const canvas = boton.querySelector('canvas');
+  if (canvas) {
+    canvas.width = 0;          // libera el búfer de píxeles de inmediato
+    canvas.height = 0;
+    canvas.remove();
+  }
+  delete boton.dataset.pintada;
+  observadorSoltar.unobserve(boton);
+  observadorMini.observe(boton);
+}
+
+// --- Navegación e indicador de página ---
+
+/** Lleva la vista a una página (0-based), opcionalmente a una altura concreta. */
+function irAPagina(indice, offsetY) {
+  const div = paginasDom[indice];
+  if (!div) return;
+  const rectZona = elZona.getBoundingClientRect();
+  const rect = div.getBoundingClientRect();
+  const destino = elZona.scrollTop + (rect.top - rectZona.top) - 12 + (offsetY || 0);
+  elZona.scrollTo({ top: Math.max(0, destino), behavior: comportamientoScroll() });
+}
+
+/** Recalcula dónde empieza cada página (al cargar o al redimensionar). */
+function recalcularTops() {
+  const rectZona = elZona.getBoundingClientRect();
+  const s = elZona.scrollTop;
+  topsPaginas = paginasDom.map((d) => d.getBoundingClientRect().top - rectZona.top + s);
+}
+
+/** Detecta qué página se está viendo (la que ocupa el tercio superior). */
+function actualizarPaginaActual() {
+  if (!topsPaginas.length) return;
+  const referencia = elZona.scrollTop + elZona.clientHeight * 0.35;
+  let lo = 0;
+  let hi = topsPaginas.length - 1;
+  let encontrada = 0;
+  while (lo <= hi) {                       // búsqueda binaria: va fina con PDFs enormes
+    const m = (lo + hi) >> 1;
+    if (topsPaginas[m] <= referencia) { encontrada = m; lo = m + 1; } else hi = m - 1;
+  }
+  if (encontrada === paginaActual) return;
+  paginaActual = encontrada;
+  pintarPaginaActual();
+}
+
+/**
+ * Refleja la página actual en el indicador, las miniaturas y el índice.
+ * Solo toca las dos miniaturas implicadas (la que deja de estar activa y la
+ * nueva): así da igual que el PDF tenga 10 páginas o 2.000.
+ */
+let miniMarcada = null;
+function pintarPaginaActual() {
+  elPagActual.textContent = paginasDom.length
+    ? (paginaActual + 1) + ' / ' + paginasDom.length
+    : '—';
+  if (miniMarcada) {
+    miniMarcada.classList.remove('actual');
+    miniMarcada.removeAttribute('aria-current');
+  }
+  const nueva = miniaturas[paginaActual] || null;
+  if (nueva) {
+    nueva.classList.add('actual');
+    nueva.setAttribute('aria-current', 'page');
+  }
+  miniMarcada = nueva;
+  irAMiniaturaActual(false);
+  marcarIndiceActual();
+}
+
+/** Mantiene a la vista la miniatura de la página actual dentro del panel. */
+function irAMiniaturaActual(forzar) {
+  if (elPanel.classList.contains('oculto') || elListaMini.classList.contains('oculto')) return;
+  const boton = miniaturas[paginaActual];
+  if (!boton) return;
+  const rl = elListaMini.getBoundingClientRect();
+  const rb = boton.getBoundingClientRect();
+  if (forzar || rb.top < rl.top || rb.bottom > rl.bottom) {
+    boton.scrollIntoView({ block: 'nearest', behavior: forzar ? 'auto' : comportamientoScroll() });
+  }
+}
+
+// El scroll del documento manda: actualizamos como mucho una vez por fotograma.
+let pendienteScroll = false;
+elZona.addEventListener('scroll', () => {
+  if (pendienteScroll) return;
+  pendienteScroll = true;
+  requestAnimationFrame(() => {
+    pendienteScroll = false;
+    actualizarPaginaActual();
+  });
+}, { passive: true });
+
+// Medir cuesta caro: se recalcula una sola vez cuando todo se ha asentado.
+let timerTops = null;
+function programarRecalculo(espera) {
+  clearTimeout(timerTops);
+  timerTops = setTimeout(() => {
+    recalcularTops();
+    actualizarPaginaActual();
+  }, espera || 80);
+}
+
+window.addEventListener('resize', () => programarRecalculo(150));
+
+// El aviso de estado flota SOBRE el documento y lo empuja hacia abajo: al
+// aparecer o desaparecer (p. ej. "Descargando voz…") las páginas se mueven, así
+// que hay que volver a medir dónde empieza cada una.
+try {
+  const vigilante = new ResizeObserver(() => programarRecalculo());
+  vigilante.observe(elEstado);
+  vigilante.observe(elVisor);
+} catch (e) { /* sin ResizeObserver nos apañamos con el resize de la ventana */ }
+
+// --- Índice (marcadores del PDF) ---
+
+/** Construye el índice del documento en el panel. */
+async function construirIndice(doc) {
+  elListaIndice.innerHTML = '';
+  indicePlano = [];
+  let esquema = null;
+  try { esquema = await doc.getOutline(); } catch (e) { esquema = null; }
+
+  if (!esquema || !esquema.length) {
+    const aviso = document.createElement('p');
+    aviso.className = 'panel-vacio';
+    aviso.textContent = 'Este PDF no trae índice: su autor no incluyó marcadores de ' +
+      'capítulos ni apartados. Usa la vista 🖼️ Páginas para moverte por el documento.';
+    elListaIndice.appendChild(aviso);
+    return;
+  }
+  agregarNodosIndice(esquema, elListaIndice, 0);
+  resolverPaginasIndice(doc);   // en segundo plano: saber a qué página va cada entrada
+}
+
+/** Añade (recursivamente) las entradas del índice, con plegado por niveles. */
+function agregarNodosIndice(items, contenedor, nivel) {
+  for (const item of items) {
+    const fila = document.createElement('div');
+    fila.className = 'idx-fila';
+    fila.style.paddingLeft = (nivel * 12) + 'px';
+
+    const tieneHijos = !!(item.items && item.items.length);
+    const chev = document.createElement('button');
+    chev.className = 'idx-chev' + (tieneHijos ? '' : ' hueco');
+    chev.textContent = tieneHijos ? (nivel === 0 ? '▾' : '▸') : '•';
+    if (tieneHijos) {
+      chev.title = 'Desplegar o plegar este apartado';
+      chev.setAttribute('aria-expanded', nivel === 0 ? 'true' : 'false');
+    } else {
+      chev.tabIndex = -1;
+      chev.setAttribute('aria-hidden', 'true');
+    }
+
+    const titulo = document.createElement('button');
+    titulo.className = 'idx-titulo';
+    titulo.textContent = String(item.title || '').trim() || '(sin título)';
+    titulo.title = titulo.textContent;
+    titulo.addEventListener('click', () => irADestino(item.dest));
+
+    fila.appendChild(chev);
+    fila.appendChild(titulo);
+    contenedor.appendChild(fila);
+    indicePlano.push({ fila, dest: item.dest, pagina: null });
+
+    if (tieneHijos) {
+      const hijos = document.createElement('div');
+      hijos.className = 'idx-hijos' + (nivel === 0 ? '' : ' oculto');
+      contenedor.appendChild(hijos);
+      agregarNodosIndice(item.items, hijos, nivel + 1);
+      chev.addEventListener('click', () => {
+        const plegado = hijos.classList.toggle('oculto');
+        chev.textContent = plegado ? '▸' : '▾';
+        chev.setAttribute('aria-expanded', plegado ? 'false' : 'true');
+      });
+    }
+  }
+}
+
+/** Página (0-based) a la que apunta un destino del PDF, o null. */
+async function paginaDeDestino(doc, dest) {
+  try {
+    let d = dest;
+    if (typeof d === 'string') d = await doc.getDestination(d);
+    if (!Array.isArray(d) || !d.length) return null;
+    const ref = d[0];
+    if (typeof ref === 'number') return ref;
+    return await doc.getPageIndex(ref);
+  } catch (e) {
+    return null;
+  }
+}
+
+/** Averigua en segundo plano a qué página va cada entrada del índice. */
+async function resolverPaginasIndice(doc) {
+  const mias = indicePlano;   // si se abre otro PDF, esta lista deja de valer
+  await Promise.all(mias.map(async (entrada) => {
+    const pagina = await paginaDeDestino(doc, entrada.dest);
+    if (mias === indicePlano) entrada.pagina = pagina;
+  }));
+  if (mias === indicePlano) marcarIndiceActual();
+}
+
+/** Resalta en el índice el apartado en el que estás (solo mueve la marca). */
+let filaIndiceMarcada = null;
+function marcarIndiceActual() {
+  if (!indicePlano.length) return;
+  let actual = null;
+  for (let i = 0; i < indicePlano.length; i++) {
+    const p = indicePlano[i].pagina;
+    if (p !== null && p !== undefined && p <= paginaActual) actual = indicePlano[i].fila;
+  }
+  if (actual === filaIndiceMarcada) return;
+  if (filaIndiceMarcada) filaIndiceMarcada.classList.remove('actual');
+  if (actual) actual.classList.add('actual');
+  filaIndiceMarcada = actual;
+}
+
+/** Navega a un destino del índice (respetando la altura exacta si la indica). */
+async function irADestino(dest) {
+  if (!pdfDoc) return;
+  try {
+    let d = dest;
+    if (typeof d === 'string') d = await pdfDoc.getDestination(d);
+    if (!Array.isArray(d) || !d.length) return;
+    const ref = d[0];
+    const pagina = typeof ref === 'number' ? ref : await pdfDoc.getPageIndex(ref);
+
+    // Muchos destinos indican también el punto vertical dentro de la página.
+    let offsetY = 0;
+    const modo = d[1] && d[1].name;
+    const y = modo === 'XYZ' ? d[3] : ((modo === 'FitH' || modo === 'FitBH') ? d[2] : null);
+    const info = paginasInfo[pagina];
+    if (info && typeof y === 'number') {
+      try {
+        const punto = info.viewport.convertToViewportPoint(0, y);
+        if (punto && isFinite(punto[1])) offsetY = Math.max(0, punto[1]);
+      } catch (e) { /* sin ajuste fino: al principio de la página */ }
+    }
+    irAPagina(pagina, offsetY);
+  } catch (e) { /* destino ilegible: no movemos la vista */ }
+}
+
+/** Vacía el panel al abrir otro PDF. */
+function reiniciarPanel() {
+  observadorMini.disconnect();
+  observadorSoltar.disconnect();
+  infoMini.clear();
+  miniaturas.length = 0;
+  paginasDom.length = 0;
+  paginasInfo.length = 0;
+  topsPaginas = [];
+  indicePlano = [];
+  paginaActual = -1;
+  miniMarcada = null;
+  filaIndiceMarcada = null;
+  pdfDoc = null;
+  elListaMini.innerHTML = '';
+  elListaIndice.innerHTML = '';
+  elPagActual.textContent = '—';
+}
+
+// ---- Cabeceras, pies y números de página (no se leen en voz alta) -----------
+//
+// En un PDF, la cabecera, el pie y el número de página son trozos de texto como
+// cualquier otro: si no se filtran, la voz suelta un "17" en mitad de una frase
+// o repite el título del libro en cada hoja. Se detectan por DOS señales, para
+// no comerse nunca contenido de verdad:
+//   1. Están en el margen de arriba o de abajo de la página (8%), y además
+//   2. o bien parecen un número de página, o bien se REPITEN en varias páginas
+//      (que es justo lo que hace una cabecera o un pie corrido).
+
+const MARGEN_BORDE = 0.08;   // 8% superior e inferior de cada página
+
+/** ¿Este texto suelto parece un número de página? */
+function esNumeroDePagina(txt) {
+  const t = String(txt).replace(/\s+/g, ' ').trim();
+  if (!t || t.length > 24) return false;
+  // Quitamos adornos típicos: - 12 -, [12], (12), | 12 |
+  const nucleo = t.replace(/^[[({\-–—|.\s]+/, '').replace(/[\])}\-–—|.\s]+$/, '').trim();
+  if (!nucleo) return false;
+  if (/^\d{1,4}$/.test(nucleo)) return true;                              // 12
+  if (/^p[áa]g(ina)?\.?\s*\d{1,4}$/i.test(nucleo)) return true;           // Página 12
+  if (/^\d{1,4}\s*(de|\/|of)\s*\d{1,4}$/i.test(nucleo)) return true;      // 12 de 30
+  // Números romanos (i, iv, XII…), habituales en prólogos e índices.
+  if (nucleo.length <= 7 &&
+      /^m{0,4}(cm|cd|d?c{0,3})(xc|xl|l?x{0,3})(ix|iv|v?i{0,3})$/i.test(nucleo)) return true;
+  return false;
+}
+
+/**
+ * Marca en cada página (`pg.omitir`) los trozos que NO se deben leer.
+ * `paginas` = [{items, alto}], donde `alto` es la altura de la página.
+ */
+function marcarCabecerasYPies(paginas) {
+  const conteo = new Map();   // "zona|texto sin cifras" → en cuántas páginas sale
+  const candidatos = [];
+
+  for (const pg of paginas) {
+    pg.omitir = new Set();
+    const vistosAqui = new Set();
+    if (!pg.alto) continue;
+    for (const item of pg.items) {
+      const txt = String(item.str || '').trim();
+      const y = item.transform && item.transform[5];
+      if (!txt || typeof y !== 'number') continue;
+      const zona = y >= pg.alto * (1 - MARGEN_BORDE) ? 'cabecera'
+        : (y <= pg.alto * MARGEN_BORDE ? 'pie' : null);
+      if (!zona) continue;
+      // Al comparar entre páginas ignoramos las cifras: así "Capítulo 3 — 15"
+      // y "Capítulo 3 — 16" cuentan como la misma cabecera.
+      const clave = zona + '|' + txt.replace(/\s+/g, ' ').replace(/\d+/g, '#').toLowerCase();
+      candidatos.push({ pg, item, clave, txt });
+      if (!vistosAqui.has(clave)) {
+        vistosAqui.add(clave);
+        conteo.set(clave, (conteo.get(clave) || 0) + 1);
+      }
+    }
+  }
+
+  // Con 4 páginas o más pedimos 3 repeticiones; con 2 o 3, dos. Con una sola
+  // página no hay repetición que valga: solo se quita si es un número.
+  const repesNecesarias = paginas.length >= 4 ? 3 : 2;
+  for (const c of candidatos) {
+    const repetido = paginas.length >= 2 && (conteo.get(c.clave) || 0) >= repesNecesarias;
+    if (repetido || esNumeroDePagina(c.txt)) c.pg.omitir.add(c.item);
+  }
+}
+
 // ---- Carga y procesado del PDF ---------------------------------------------------
 
 /** Saca un nombre legible del final de la URL. */
@@ -523,6 +1019,7 @@ async function procesarPdf(datos, nombre) {
   limpiarResaltado();
   vista = null;
   infoPaginas.clear();
+  reiniciarPanel();
   elVisor.innerHTML = '';
   elProgreso.textContent = '';
   elTitulo.textContent = nombre;
@@ -543,6 +1040,7 @@ async function procesarPdf(datos, nombre) {
     );
     return;
   }
+  pdfDoc = documento;   // lo usa el índice del panel para resolver destinos
 
   // Ancho disponible: usamos también el del viewport porque durante la carga
   // el contenedor puede medir 0 y las páginas saldrían diminutas.
@@ -573,6 +1071,11 @@ async function procesarPdf(datos, nombre) {
     infoPaginas.set(divPag, { page, viewport });
     observador.observe(divPag);
 
+    // Panel lateral: apuntamos la página y creamos su miniatura.
+    paginasDom.push(divPag);
+    paginasInfo.push({ page, viewport });
+    crearMiniatura(page, vp1, p);
+
     // Capa de texto + comprobación de que cada trozo tiene su nodo.
     const contenido = await page.getTextContent();
     const nodos = [];
@@ -598,8 +1101,17 @@ async function procesarPdf(datos, nombre) {
         coincide = false;
       }
     }
-    paginas.push({ items: contenido.items, nodos, coincide });
+    paginas.push({ items: contenido.items, nodos, coincide, alto: vp1.height });
   }
+
+  // El panel ya puede navegar (aunque el PDF luego resulte no tener texto).
+  recalcularTops();
+  paginaActual = -1;
+  actualizarPaginaActual();
+  construirIndice(documento);
+
+  // Fuera cabeceras, pies y números de página: no se leen en voz alta.
+  marcarCabecerasYPies(paginas);
 
   // Texto global + mapa de posiciones + cortes (páginas y párrafos).
   const resaltable = hayTextLayer && paginas.every((pg) => pg.coincide);
@@ -614,6 +1126,10 @@ async function procesarPdf(datos, nombre) {
     let iNodo = 0;
     for (const item of pg.items) {
       if (!item.str) continue;
+      // OJO: el contador de nodos avanza SIEMPRE, también con los trozos que no
+      // se leen; si no, la capa de texto y el resaltado se desalinearían.
+      const indiceNodo = iNodo++;
+      if (pg.omitir.has(item)) continue;   // cabecera, pie o número de página
       // Un salto vertical grande entre líneas = párrafo nuevo.
       if (previo) {
         const dy = Math.abs(previo.transform[5] - item.transform[5]);
@@ -623,13 +1139,12 @@ async function procesarPdf(datos, nombre) {
       // Hueco "virtual": espacio para hablar que no existe en el DOM del PDF.
       if (texto.length && !/\s$/.test(texto) && !/^\s/.test(item.str)) texto += ' ';
       if (resaltable) {
-        const seg = { nodo: pg.nodos[iNodo], desde: 0, hasta: item.str.length, ini: texto.length };
+        const seg = { nodo: pg.nodos[indiceNodo], desde: 0, hasta: item.str.length, ini: texto.length };
         mapa.push(seg);
         porNodo.set(seg.nodo, seg);
       }
       texto += item.str;
       previo = item;
-      iNodo++;
     }
   }
 
