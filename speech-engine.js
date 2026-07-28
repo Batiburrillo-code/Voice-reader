@@ -33,6 +33,20 @@
   // voz no emite eventos de posición (~16 caracteres por segundo en español).
   const CARACTERES_POR_SEGUNDO = 16;
 
+  // Voces neuronales: cuántas frases se preparan por delante y cuántas se
+  // guardan a cada lado de la actual. Con esto, pasar de frase, retroceder,
+  // pausar o reiniciar no obliga a sintetizar otra vez (suena al momento).
+  const PREFETCH = 2;
+  const VENTANA_CACHE = 3;
+
+  /** ¿Son la misma lista de oraciones? (comparación barata: largo + extremos) */
+  function mismasOraciones(a, b) {
+    if (a === b) return true;
+    if (!a || !b || a.length !== b.length) return false;
+    if (!a.length) return true;
+    return a[0] === b[0] && a[a.length - 1] === b[b.length - 1];
+  }
+
   // Voces neuronales Piper disponibles (se descargan de Hugging Face la
   // primera vez y quedan guardadas en el navegador; después van sin conexión).
   // Ordenadas por región: español latino primero (México, según lo pedido),
@@ -501,15 +515,18 @@
           }
         }
 
-        // Mientras suena esta oración, dejamos la siguiente sintetizándose
-        // en segundo plano para que no haya huecos entre frases.
-        if (i + 1 < motor.oraciones.length) {
-          obtenerAudio(i + 1, voz).catch(function () { /* se verá al llegar */ });
+        // Mientras suena esta oración dejamos preparadas las SIGUIENTES: así
+        // pasar de frase (⏭) suena al instante aunque se pulse varias veces.
+        for (let k = 1; k <= PREFETCH; k++) {
+          if (i + k < motor.oraciones.length) {
+            obtenerAudio(i + k, voz).catch(function () { /* se verá al llegar */ });
+          }
         }
-        // Y liberamos audios viejos de la caché.
+        // Conservamos una ventana alrededor de la frase actual (también hacia
+        // atrás, para que ⏮ y repetir no tengan que sintetizar otra vez).
         for (const clave of Array.from(motor._cacheAudio.keys())) {
           const n = Number(clave.split('|')[1]);
-          if (n < i - 1) motor._cacheAudio.delete(clave);
+          if (n < i - VENTANA_CACHE || n > i + VENTANA_CACHE) motor._cacheAudio.delete(clave);
         }
       } catch (e) {
         if (turno !== motor._turno) return;
@@ -527,8 +544,12 @@
 
     /** Empieza a leer una lista de oraciones desde el índice dado. */
     motor.iniciar = function (oraciones, desde) {
-      motor._cacheAudio.clear();
-      motor.oraciones = oraciones || [];
+      const nuevas = oraciones || [];
+      // Solo tiramos los audios ya sintetizados si el texto es OTRO. Así
+      // reiniciar la lectura, o pinchar en otro párrafo del mismo documento,
+      // arranca al instante en vez de volver a sintetizar lo mismo.
+      if (!mismasOraciones(motor.oraciones, nuevas)) motor._cacheAudio.clear();
+      motor.oraciones = nuevas;
       motor.enPausa = false;
       motor.leyendo = motor.oraciones.length > 0;
       if (motor.leyendo) hablar(desde || 0);

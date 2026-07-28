@@ -60,8 +60,106 @@
     .grupo.desactivado button:hover { background: transparent; }
     #progreso { font-size: 12px; color: #9a9aac; min-width: 60px; text-align: center; }
 
+    /* Botón de solo icono (☰ del panel) */
+    .icono { font-size: 15px; line-height: 1; padding: 8px 11px; }
+    .icono[aria-expanded="true"] {
+      background: linear-gradient(135deg, #7c5cff, #5a8bff);
+      border-color: transparent; color: #fff;
+    }
+    .icono[aria-expanded="true"]:hover { filter: brightness(1.12); }
+    /* Indicador de la página que se está viendo */
+    .pagina-actual {
+      font-size: 12.5px; font-weight: 650; color: #e9e9ef;
+      background: #2a2a38; border: 1px solid #3a3a4e;
+      border-radius: 999px; padding: 5px 11px; white-space: nowrap;
+    }
+
+    /* Cuerpo: panel lateral + documento, uno al lado del otro */
+    .cuerpo { flex: 1; display: flex; min-height: 0; position: relative; }
+
+    /* ---- Panel lateral (miniaturas / índice) ---- */
+    #panel {
+      flex: none; width: 214px; min-height: 0;
+      display: flex; flex-direction: column;
+      background: #20202a; border-right: 1px solid #34344a;
+    }
+    #panel.oculto { display: none; }
+    .panel-tabs {
+      display: flex; gap: 5px; padding: 8px;
+      border-bottom: 1px solid #2c2c3a; flex: none;
+    }
+    .panel-tabs button {
+      flex: 1; padding: 7px 4px; font-size: 11.5px; font-weight: 650;
+      border-radius: 9px; border: 1px solid transparent;
+      background: transparent; color: #9a9aac; white-space: nowrap;
+    }
+    .panel-tabs button:hover { background: #2a2a38; color: #e9e9ef; }
+    .panel-tabs button[aria-selected="true"] {
+      background: linear-gradient(135deg, #7c5cff, #5a8bff);
+      color: #fff; border-color: transparent;
+    }
+    .panel-cuerpo { flex: 1; overflow-y: auto; padding: 10px; min-height: 0; }
+    .panel-cuerpo.oculto { display: none; }
+    .panel-vacio { font-size: 12px; line-height: 1.55; color: #9a9aac; padding: 6px 2px; }
+
+    /* Miniaturas de página */
+    .mini {
+      display: block; width: 100%; margin: 0 0 12px;
+      padding: 0; background: none; border: none; cursor: pointer;
+    }
+    .mini .marco {
+      display: block; margin: 0 auto; background: #fff;
+      border: 2px solid transparent; border-radius: 5px; overflow: hidden;
+      box-shadow: 0 2px 10px rgba(0, 0, 0, .45);
+      transition: border-color .15s, box-shadow .15s;
+    }
+    .mini canvas { display: block; width: 100%; height: 100%; }
+    .mini .num {
+      display: block; text-align: center; margin-top: 4px;
+      font-size: 11px; color: #9a9aac;
+    }
+    .mini:hover .marco { border-color: #5a5a78; }
+    .mini.actual .marco {
+      border-color: #7c5cff;
+      box-shadow: 0 0 0 3px rgba(124, 92, 255, .28), 0 2px 10px rgba(0, 0, 0, .45);
+    }
+    .mini.actual .num { color: #fff; font-weight: 700; }
+    .mini:focus-visible .marco { border-color: #9a86ff; }
+
+    /* Índice (marcadores del PDF) */
+    .idx-fila { display: flex; align-items: flex-start; gap: 2px; }
+    .idx-chev {
+      flex: none; width: 20px; padding: 3px 0; border: none; background: transparent;
+      color: #9a9aac; font-size: 10px; line-height: 1.5; border-radius: 6px;
+    }
+    .idx-chev:hover { background: #2a2a38; color: #e9e9ef; }
+    .idx-chev.hueco { visibility: hidden; cursor: default; }
+    .idx-titulo {
+      flex: 1; min-width: 0; text-align: left; border: none; background: transparent;
+      color: #cfcfdd; font-size: 12px; line-height: 1.45; padding: 4px 6px;
+      border-radius: 7px; font-weight: 500;
+    }
+    .idx-titulo:hover { background: #2a2a38; color: #fff; }
+    .idx-fila.actual .idx-titulo {
+      background: rgba(124, 92, 255, .20); color: #fff; font-weight: 700;
+      box-shadow: inset 2px 0 0 #7c5cff;
+    }
+    .idx-hijos.oculto { display: none; }
+
     /* Zona del documento (con scroll) */
-    main { flex: 1; overflow-y: auto; padding: 22px 12px 40vh; }
+    main { flex: 1; min-width: 0; overflow-y: auto; padding: 22px 12px 40vh; }
+
+    /* En ventanas estrechas el panel se superpone en vez de robar espacio */
+    @media (max-width: 720px) {
+      #panel {
+        position: absolute; top: 0; bottom: 0; left: 0; z-index: 8;
+        box-shadow: 0 0 30px rgba(0, 0, 0, .6);
+      }
+    }
+    /* Respeta a quien pide menos animación */
+    @media (prefers-reduced-motion: reduce) {
+      .mini .marco { transition: none; }
+    }
     #visor { display: flex; flex-direction: column; align-items: center; gap: 18px; }
     .pagina {
       position: relative; background: #fff;
@@ -105,7 +203,14 @@
 </head>
 <body>
   <header>
+    <!-- Muestra u oculta el panel lateral de miniaturas / índice -->
+    <button id="btn-panel" class="icono" title="Mostrar u ocultar el panel de páginas (miniaturas e índice)"
+            aria-label="Mostrar u ocultar el panel de páginas" aria-expanded="true" aria-controls="panel">☰</button>
+
     <span class="titulo" id="titulo">Lector de PDF</span>
+
+    <!-- Página que se está viendo ahora mismo -->
+    <span id="pag-actual" class="pagina-actual" title="Página que estás viendo" aria-live="polite">—</span>
 
     <button id="btn-anterior" title="Oración anterior">⏮</button>
     <button id="btn-pausa" class="primario" title="Pausar / Reanudar">⏸</button>
@@ -136,10 +241,24 @@
     <span id="progreso"></span>
   </header>
 
-  <main id="zona">
-    <div id="estado">Preparando el lector…</div>
-    <div id="visor"></div>
-  </main>
+  <div class="cuerpo">
+    <!-- Panel lateral: miniaturas de las páginas e índice del documento -->
+    <aside id="panel" aria-label="Panel de navegación del documento">
+      <div class="panel-tabs" role="tablist" aria-label="Vistas del panel">
+        <button id="tab-miniaturas" role="tab" aria-selected="true" aria-controls="lista-miniaturas"
+                title="Miniaturas de todas las páginas">🖼️ Páginas</button>
+        <button id="tab-indice" role="tab" aria-selected="false" aria-controls="lista-indice"
+                title="Índice del documento (títulos y apartados)">🔖 Índice</button>
+      </div>
+      <div id="lista-miniaturas" class="panel-cuerpo" role="tabpanel" aria-labelledby="tab-miniaturas" tabindex="0"></div>
+      <div id="lista-indice" class="panel-cuerpo oculto" role="tabpanel" aria-labelledby="tab-indice" tabindex="0"></div>
+    </aside>
+
+    <main id="zona">
+      <div id="estado">Preparando el lector…</div>
+      <div id="visor"></div>
+    </main>
+  </div>
 
   <!-- Selector de archivo oculto, para PDFs locales -->
   <input type="file" id="input-archivo" accept="application/pdf,.pdf" style="display:none">
