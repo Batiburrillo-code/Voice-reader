@@ -15,6 +15,12 @@
   const selVoz = document.getElementById('sel-voz');
   const rangoVel = document.getElementById('rango-vel');
   const txtVel = document.getElementById('txt-vel');
+  // Tuerca de ajustes: apariencia (claro/oscuro) y «¿Qué se lee?».
+  const btnAjustes = document.getElementById('btn-ajustes');
+  const panelAjustes = document.getElementById('panel-ajustes');
+  const segmentoTema = document.getElementById('segmento-tema');
+  const cabezaQueSeLee = document.getElementById('cabeza-que-se-lee');
+  const resumenQueSeLee = document.getElementById('resumen-que-se-lee');
   const listaLectura = document.getElementById('lista-lectura');
   const btnLeerPagina = document.getElementById('btn-leer-pagina');
   const btnLeerSeleccion = document.getElementById('btn-leer-seleccion');
@@ -165,13 +171,40 @@
     }
   }
 
-  // ---- "Qué se lee": una casilla por parte del documento --------------------
+  // ---- La tuerca: apariencia y qué se lee ----------------------------------
+
+  /** Abre o cierra el panel de la tuerca. */
+  function abrirAjustes(abrir) {
+    panelAjustes.hidden = !abrir;
+    btnAjustes.setAttribute('aria-expanded', abrir ? 'true' : 'false');
+  }
+  btnAjustes.addEventListener('click', () => abrirAjustes(panelAjustes.hidden));
+
+  // ---- Apariencia (claro / oscuro) -----------------------------------------
+
+  /** Deja marcado el botón del tema activo. */
+  function reflejarTema(tema) {
+    const t = LectorTTS.normalizarTema(tema);
+    for (const b of segmentoTema.querySelectorAll('button')) {
+      b.setAttribute('aria-pressed', b.dataset.tema === t ? 'true' : 'false');
+    }
+  }
+
+  segmentoTema.addEventListener('click', (ev) => {
+    const boton = ev.target.closest('button[data-tema]');
+    if (!boton) return;
+    ajustes.tema = boton.dataset.tema;
+    LectorTTS.aplicarTema(ajustes.tema);   // se ve al instante
+    reflejarTema(ajustes.tema);
+    chrome.storage.sync.set({ tema: ajustes.tema });
+  });
+
+  // ---- "¿Qué se lee?": una casilla por parte del documento ------------------
 
   const casillasLectura = new Map();   // clave del ajuste → <input type=checkbox>
 
   /** Pinta la lista de interruptores a partir de LectorTTS.OPCIONES_LECTURA. */
   function pintarOpcionesLectura() {
-    listaLectura.innerHTML = '';
     for (const op of LectorTTS.OPCIONES_LECTURA) {
       const fila = document.createElement('label');
       fila.className = 'opcion-lectura';
@@ -183,6 +216,7 @@
       casilla.addEventListener('change', () => {
         ajustes[op.clave] = casilla.checked;
         chrome.storage.sync.set({ [op.clave]: casilla.checked });
+        pintarResumenLectura();
       });
 
       const nombre = document.createElement('span');
@@ -197,10 +231,27 @@
       listaLectura.appendChild(fila);
       casillasLectura.set(op.clave, casilla);
     }
+    pintarResumenLectura();
   }
 
-  // Si el ajuste cambia en otro sitio (el lector de PDF, otra ventana), que las
-  // casillas de aquí no se queden mintiendo.
+  /** Con el plegable cerrado, el contador es la única pista de lo que hay dentro. */
+  function pintarResumenLectura() {
+    let marcadas = 0;
+    for (const casilla of casillasLectura.values()) if (casilla.checked) marcadas++;
+    resumenQueSeLee.textContent = marcadas + ' de ' + casillasLectura.size;
+  }
+
+  /** Abre o cierra el plegable, y recuerda la preferencia. */
+  function abrirQueSeLee(abrir, guardar) {
+    listaLectura.hidden = !abrir;
+    cabezaQueSeLee.setAttribute('aria-expanded', abrir ? 'true' : 'false');
+    ajustes.queSeLeeAbierto = !!abrir;
+    if (guardar !== false) chrome.storage.sync.set({ queSeLeeAbierto: !!abrir });
+  }
+  cabezaQueSeLee.addEventListener('click', () => abrirQueSeLee(listaLectura.hidden));
+
+  // Si algo cambia en otro sitio (el lector de PDF, otra ventana), que los
+  // controles de aquí no se queden mintiendo.
   chrome.storage.onChanged.addListener((cambios, area) => {
     if (area !== 'sync') return;
     for (const [clave, casilla] of casillasLectura) {
@@ -209,6 +260,12 @@
         casilla.checked = ajustes[clave];
       }
     }
+    if (Object.keys(cambios).some((c) => casillasLectura.has(c))) pintarResumenLectura();
+    if ('tema' in cambios) {
+      ajustes.tema = LectorTTS.aplicarTema(cambios.tema.newValue);
+      reflejarTema(ajustes.tema);
+    }
+    if ('queSeLeeAbierto' in cambios) abrirQueSeLee(!!cambios.queSeLeeAbierto.newValue, false);
   });
 
   // En Chromium getVoices() devuelve [] al abrir: repoblar cuando avisen.
@@ -289,7 +346,12 @@
     rangoVel.value = String(ajustes.velocidad);
     txtVel.textContent = Number(ajustes.velocidad).toFixed(1) + '×';
     pintarRelleno(rangoVel);
+    // El tema ya se pintó con la copia rápida al cargar el script; esto lo
+    // confirma con lo que diga chrome.storage (que es lo que manda).
+    LectorTTS.aplicarTema(ajustes.tema);
+    reflejarTema(ajustes.tema);
     pintarOpcionesLectura();
+    abrirQueSeLee(!!ajustes.queSeLeeAbierto, false);
     poblarVoces();
   });
 

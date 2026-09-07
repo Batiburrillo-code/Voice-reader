@@ -42,9 +42,13 @@ const btnAbrir = document.getElementById('btn-abrir');
 const inputArchivo = document.getElementById('input-archivo');
 const selVoz = document.getElementById('sel-voz');
 const txtVel = document.getElementById('txt-vel');
-// "Qué se lee": botón de la barra y su panelito de casillas.
-const btnQueSeLee = document.getElementById('btn-que-se-lee');
-const panelQueSeLee = document.getElementById('panel-que-se-lee');
+// Tuerca de ajustes: apariencia (claro/oscuro) y «¿Qué se lee?».
+const btnAjustes = document.getElementById('btn-ajustes');
+const panelAjustes = document.getElementById('panel-ajustes');
+const segmentoTema = document.getElementById('segmento-tema');
+const cabezaQueSeLee = document.getElementById('cabeza-que-se-lee');
+const resumenQueSeLee = document.getElementById('resumen-que-se-lee');
+const listaLectura = document.getElementById('lista-lectura');
 // Panel lateral: miniaturas de páginas e índice del documento.
 const elPanel = document.getElementById('panel');
 const btnPanel = document.getElementById('btn-panel');
@@ -283,12 +287,56 @@ function ocultarEstado() {
 
 function pintarVel(v) { txtVel.textContent = Number(v).toFixed(1) + '×'; }
 
-// ---- "Qué se lee" -----------------------------------------------------------
+// ---- Ajustes: la tuerca de la barra -----------------------------------------
 //
-// Un interruptor por parte del documento (números de página, cabeceras, pies y
-// pies de imagen). Las opciones se definen una sola vez en speech-engine.js,
-// así que el popup y este panel ofrecen exactamente lo mismo, y se guardan en
-// chrome.storage.sync: cambiarlo aquí lo cambia también allí.
+// Dentro viven la apariencia (claro / oscuro) y el «¿Qué se lee?», que se
+// pliega aparte. Las opciones de lectura se definen una sola vez en
+// speech-engine.js, así que el popup y este panel ofrecen exactamente lo mismo,
+// y todo se guarda en chrome.storage.sync: cambiarlo aquí lo cambia allí.
+
+/** Abre o cierra el panel de la tuerca. */
+function abrirAjustes(abrir) {
+  panelAjustes.hidden = !abrir;
+  btnAjustes.setAttribute('aria-expanded', abrir ? 'true' : 'false');
+}
+
+btnAjustes.addEventListener('click', (ev) => {
+  ev.stopPropagation();
+  abrirAjustes(panelAjustes.hidden);   // el mismo botón abre y cierra
+});
+// Un clic fuera (o Escape) lo cierra.
+document.addEventListener('click', (ev) => {
+  if (panelAjustes.hidden) return;
+  if (panelAjustes.contains(ev.target) || btnAjustes.contains(ev.target)) return;
+  abrirAjustes(false);
+});
+document.addEventListener('keydown', (ev) => {
+  if (ev.key !== 'Escape' || panelAjustes.hidden) return;
+  abrirAjustes(false);
+  btnAjustes.focus();
+});
+
+// ---- Apariencia (claro / oscuro) --------------------------------------------
+
+/** Deja marcado el botón del tema activo. */
+function reflejarTema(tema) {
+  const t = LectorTTS.normalizarTema(tema);
+  for (const b of segmentoTema.querySelectorAll('button')) {
+    b.setAttribute('aria-pressed', b.dataset.tema === t ? 'true' : 'false');
+  }
+}
+
+segmentoTema.addEventListener('click', (ev) => {
+  const boton = ev.target.closest('button[data-tema]');
+  if (!boton) return;
+  // Se pinta ya, para que el clic se sienta instantáneo; el eco de
+  // storage.onChanged es el que manda y lo deja igual.
+  LectorTTS.aplicarTema(boton.dataset.tema);
+  reflejarTema(boton.dataset.tema);
+  LectorTTS.guardarAjustes({ tema: boton.dataset.tema });
+});
+
+// ---- "¿Qué se lee?" (plegable dentro de la tuerca) --------------------------
 
 const casillasLectura = new Map();   // clave del ajuste → <input type=checkbox>
 
@@ -315,34 +363,31 @@ function pintarPanelQueSeLee() {
     ayuda.textContent = op.ayuda;
 
     fila.append(casilla, nombre, ayuda);
-    panelQueSeLee.appendChild(fila);
+    listaLectura.appendChild(fila);
     casillasLectura.set(op.clave, casilla);
   }
+  sincronizarCasillasLectura();
 }
 
-/** Refleja los ajustes actuales en las casillas del panel. */
+/** Refleja los ajustes actuales en las casillas y en el resumen de la cabecera. */
 function sincronizarCasillasLectura() {
-  for (const [clave, casilla] of casillasLectura) casilla.checked = !!motor.ajustes[clave];
+  let marcadas = 0;
+  for (const [clave, casilla] of casillasLectura) {
+    casilla.checked = !!motor.ajustes[clave];
+    if (casilla.checked) marcadas++;
+  }
+  // Con el plegable cerrado, este contador es la única pista de lo que hay dentro.
+  resumenQueSeLee.textContent = marcadas + ' de ' + casillasLectura.size;
 }
 
-function abrirPanelQueSeLee(abrir) {
-  panelQueSeLee.hidden = !abrir;
-  btnQueSeLee.setAttribute('aria-expanded', abrir ? 'true' : 'false');
+/** Abre o cierra el plegable, y recuerda la preferencia. */
+function abrirQueSeLee(abrir, guardar) {
+  listaLectura.hidden = !abrir;
+  cabezaQueSeLee.setAttribute('aria-expanded', abrir ? 'true' : 'false');
+  if (guardar !== false) LectorTTS.guardarAjustes({ queSeLeeAbierto: !!abrir });
 }
 
-btnQueSeLee.addEventListener('click', (ev) => {
-  ev.stopPropagation();
-  abrirPanelQueSeLee(panelQueSeLee.hidden);
-});
-// Un clic fuera (o Escape) cierra el panelito.
-document.addEventListener('click', (ev) => {
-  if (panelQueSeLee.hidden) return;
-  if (panelQueSeLee.contains(ev.target) || btnQueSeLee.contains(ev.target)) return;
-  abrirPanelQueSeLee(false);
-});
-document.addEventListener('keydown', (ev) => {
-  if (ev.key === 'Escape' && !panelQueSeLee.hidden) abrirPanelQueSeLee(false);
-});
+cabezaQueSeLee.addEventListener('click', () => abrirQueSeLee(listaLectura.hidden));
 
 // Pre-calentado del motor neuronal: la primera lectura con una voz Piper
 // arranca "en frío" (carga del WASM + lectura del modelo). Sintetizamos un
@@ -359,7 +404,12 @@ function calentarNeural() {
 LectorTTS.cargarAjustes((ajustes) => {
   motor.ajustes = ajustes;
   pintarVel(ajustes.velocidad);
+  // El tema ya se pintó con la copia rápida al cargar el script; esto lo
+  // confirma con lo que diga chrome.storage (que es lo que manda).
+  LectorTTS.aplicarTema(ajustes.tema);
+  reflejarTema(ajustes.tema);
   pintarPanelQueSeLee();
+  abrirQueSeLee(!!ajustes.queSeLeeAbierto, false);
   poblarVoces();
   calentarNeural();
 });
@@ -377,6 +427,15 @@ chrome.storage.onChanged.addListener((cambios, area) => {
     motor.fijarVelocidad(cambios.velocidad.newValue);
     pintarVel(cambios.velocidad.newValue);
   }
+  // El tema puede haberlo cambiado el popup (o esta misma página).
+  if ('tema' in cambios) {
+    LectorTTS.aplicarTema(cambios.tema.newValue);
+    reflejarTema(cambios.tema.newValue);
+  }
+  if ('queSeLeeAbierto' in cambios) {
+    abrirQueSeLee(!!cambios.queSeLeeAbierto.newValue, false);
+  }
+
   // "Qué se lee": cambia lo que hay que leer, así que hay que rehacer el texto
   // del documento (retomando en la misma frase). Puede venir de este panel o
   // del popup de la extensión: el camino es el mismo.

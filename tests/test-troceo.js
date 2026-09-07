@@ -7,7 +7,7 @@ const rutaMotor = path.join(__dirname, '..', 'speech-engine.js');
 eval(fs.readFileSync(rutaMotor, 'utf8')); // define globalThis.LectorTTS (sin window ni chrome)
 
 const { trocearEnOraciones, trocearRangos, esVozNeural, idPiper, OPCIONES_LECTURA,
-  AJUSTES_DEFECTO, VOCES_NEURALES } = globalThis.LectorTTS;
+  AJUSTES_DEFECTO, VOCES_NEURALES, normalizarTema, aplicarTema } = globalThis.LectorTTS;
 let fallos = 0;
 
 function caso(nombre, texto, comprobaciones) {
@@ -128,6 +128,18 @@ const okOpciones = Array.isArray(OPCIONES_LECTURA)
   && !('tono' in AJUSTES_DEFECTO);
 console.log((okOpciones ? '✓' : '✗') + ' OPCIONES_LECTURA y sus valores por defecto');
 if (!okOpciones) fallos++;
+
+// 12. Tema: solo hay dos, y cualquier basura cae en "oscuro" (el de fábrica)
+const okTema = normalizarTema('claro') === 'claro'
+  && normalizarTema('oscuro') === 'oscuro'
+  && normalizarTema('') === 'oscuro'
+  && normalizarTema(undefined) === 'oscuro'
+  && normalizarTema('AZUL') === 'oscuro'
+  && AJUSTES_DEFECTO.tema === 'oscuro'
+  // Sin document ni localStorage (aquí, en Node) no debe reventar: solo devuelve.
+  && aplicarTema('claro') === 'claro';
+console.log((okTema ? '✓' : '✗') + ' tema claro/oscuro (normalizar y aplicar sin DOM)');
+if (!okTema) fallos++;
 
 // 12. Catálogo de voces neuronales: ids bien formados y voces latinas presentes
 const ids = VOCES_NEURALES.map(v => v.id);

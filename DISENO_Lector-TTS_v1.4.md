@@ -84,7 +84,9 @@ Estructura (de arriba abajo), ancho fijo **340 px**, tema oscuro:
 1. **Título:** logo cuadrado 🔊 (26×26, degradado morado) + «Lector TTS».
 2. **Voz** — `<select>` con grupos: `✨ Automática`, `🌟 Neuronales`, `Sistema · Español`, `Sistema · Otros idiomas`.
 3. **Velocidad** — fila `[−] [slider 0.5–5] [+] [valor ×]` (pasos de 0.1).
-4. **Qué se lee** — lista de casillas (una por parte del documento: números de página, cabeceras, pies, pies de imagen). Lo no marcado se salta al leer. Se pintan desde `LectorTTS.OPCIONES_LECTURA`, la misma fuente que usa el lector de PDF.
+4. **Tuerca ⚙** — al final del título, alineada a la derecha. Despliega (y repliega) el panel de ajustes, que va justo debajo del título y contiene:
+   - **Apariencia** — control segmentado de dos posiciones: `☀ Claro` / `☾ Oscuro`.
+   - **¿Qué se lee?** — sección **plegable** con una casilla por parte del documento (números de página, cabeceras, pies, pies de imagen). Se pintan desde `LectorTTS.OPCIONES_LECTURA`, la misma fuente que usa el lector de PDF. Con el plegable cerrado, la cabecera muestra un contador «*n* de 4». Su estado abierto/cerrado se guarda en `queSeLeeAbierto`.
 5. **Acciones** (grid 2 col): **▶ Leer página** (botón primario morado) y **🔊 Leer selección**.
 6. **Transporte** (grid 4 col): **⏮ ⏯ ⏹ ⏭**.
 7. **👆 Leer al hacer clic** — botón interruptor (ancho completo; se pone morado al activarse).
@@ -118,9 +120,11 @@ el documento**.
 
 - **Cabecera** (barra superior fija): **☰** panel · título 📄 · **indicador de
   página** («3 / 12», pastilla) · `⏮ ⏸ ⏭` · `🧭/🎯` auto-encuadre · grupo
-  **Velocidad** · botón **Qué se lee** (abre un panelito de casillas anclado
-  debajo; se cierra con clic fuera o `Esc`) · `<select>` voz ·
-  **📂 Abrir PDF…** · progreso.
+  **Velocidad** · **tuerca ⚙** · `<select>` voz · **📂 Abrir PDF…** · progreso.
+- **Tuerca ⚙** — el mismo botón abre y cierra un panel flotante (296 px) anclado
+  bajo la barra, que también se cierra con un clic fuera o con `Esc`. Dentro:
+  **Apariencia** (`☀ Claro` / `☾ Oscuro`) y **¿Qué se lee?** plegable, idéntico
+  al del popup. Los dos paneles se pintan desde las mismas constantes.
 - **Panel lateral izquierdo** (214 px, fondo `#20202a`, borde derecho `#34344a`),
   con dos pestañas tipo *tablist* (la activa lleva el degradado morado→azul):
   - **Páginas** — miniatura de cada hoja (168 px de ancho, marco blanco con
@@ -151,6 +155,23 @@ sistema. **Actualmente NO hay tema claro.**
 - Pesos usados: 600 / 650 / 700 para énfasis y títulos.
 
 ### 4.2 Color (los valores que están en el código)
+
+> [!info] Desde la v1.6 hay **dos temas**
+> Todo el color de `popup.html` y `reader.html` sale de variables CSS definidas
+> en `:root` (oscuro) y `:root[data-tema="claro"]` (claro). El atributo
+> `data-tema` del `<html>` lo pone `speech-engine.js` al cargarse, leyendo una
+> copia rápida en `localStorage`, **antes del primer pintado** — por eso el
+> popup no da un fogonazo al abrirse. La verdad vive en `chrome.storage.sync`
+> (`tema`), que es lo que se sincroniza entre equipos.
+>
+> En claro el morado del acento baja a `#6544ee` (y el azul a `#3f74ee`): con
+> `#7c5cff` el texto blanco encima se quedaba corto de contraste.
+>
+> `speech-engine.js` también se inyecta en **todas las páginas web**, así que
+> solo toca el tema si el documento ya trae un `data-tema` puesto a mano — cosa
+> que solo hacen `popup.html` y `reader.html`. En una web ajena no hace nada.
+>
+> La tabla de abajo es la paleta **oscura**, que sigue siendo la de fábrica.
 
 | Rol | Valor | Dónde |
 |---|---|---|
@@ -321,6 +342,8 @@ perfil). Claves y valores por defecto:
 |---|---|---|
 | `vozNombre` | `''` | `''`=automática · nombre de voz del sistema · `piper:<id>`=neuronal |
 | `velocidad` | `1.1` | 0.5–5 |
+| `tema` | `'oscuro'` | `'claro'` u `'oscuro'`; se cachea en `localStorage` para pintar sin fogonazo (v1.6) |
+| `queSeLeeAbierto` | `false` | si el plegable «¿Qué se lee?» de la tuerca queda abierto (v1.6) |
 | `leerNumerosPagina` | `false` | qué se lee: números de página (v1.5) |
 | `leerCabeceras` | `false` | qué se lee: cabeceras corridas · `<header>` en web (v1.5) |
 | `leerPies` | `false` | qué se lee: pies corridos · `<footer>` en web (v1.5) |
@@ -438,8 +461,10 @@ tras el primer uso.
 - **PDF:** el resaltado exige que la capa de texto de pdf.js cuadre 1:1 con el
   documento; si no, **lee sin resaltar**. Los **PDFs escaneados** se ven pero **no
   se leen** (no hay OCR).
-- **Solo tema oscuro:** no hay tema claro ni seguimiento de la preferencia del
-  sistema.
+- **El tema no sigue al sistema:** hay claro y oscuro, pero se eligen a mano;
+  no existe un modo «automático» que mire `prefers-color-scheme`.
+- **La barrita flotante de las webs es siempre oscura:** va dentro de un Shadow
+  DOM encima de páginas ajenas, y el tema de la extensión no se le aplica.
 - **Índice del panel:** depende de que el PDF traiga marcadores; muchos no los
   llevan y entonces esa pestaña solo muestra el texto de estado vacío.
 - **Filtro de cabeceras/pies:** es una detección por posición + repetición, no
@@ -464,6 +489,7 @@ tras el primer uso.
   intercambiables y ocultables). **No se leen** números de página, cabeceras ni
   pies. **Menos espera** al pasar de frase, retroceder, pausar o reiniciar
   (caché con ventana + prefetch de 2). Nueva prueba `tests/test-cabeceras.js`.
+- **v1.6.0** — **Tuerca ⚙ de ajustes** en el popup y en el lector de PDF, con **tema claro/oscuro** y el «¿Qué se lee?» convertido en plegable. Todo el color de las dos páginas pasa a variables CSS con dos paletas. **Arreglado:** el panel de «Qué se lee» de la v1.5 no se cerraba — `#panel-que-se-lee { display: flex }` (selector de id) le ganaba al `[hidden] { display: none }` del navegador. Ahora las dos hojas de estilo declaran `[hidden] { display: none !important; }`.
 - **v1.5.0** — **Qué se lee**: interruptor por tipo (números de página, cabeceras, pies y **pies de imagen**), en el popup y en el lector de PDF, aplicado **al vuelo** sin recargar. **Fuera el control de tono** (`tono`, `soportaTono`, `fijarTono` y su interfaz en las tres superficies). **Sin emojis** en las pestañas «Páginas» e «Índice» del panel. `tests/test-cabeceras.js` ampliada a pies de imagen y a cada interruptor.
 - **v1.4.0** — **Voces:** Argentina (`es_AR-daniela`) + varias inglesas, orden por región. **Tono en gris** con neuronales. **Leer al hacer clic** + `Alt`+clic. **Arranque rápido** (pre-calentado + caché de sesión). **Barra movible y plegable** (colapso a solo `⏮ ⏸ ⏭`, símbolo de arrastre único). PR #1 fusionada; etiqueta `v1.4.0`.
 

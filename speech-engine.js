@@ -28,11 +28,58 @@
   const AJUSTES_DEFECTO = {
     vozNombre: '',
     velocidad: 1.1,
+    tema: 'oscuro',
+    // Si el plegable «¿Qué se lee?» de la tuerca queda abierto o cerrado.
+    queSeLeeAbierto: false,
     leerNumerosPagina: false,
     leerCabeceras: false,
     leerPies: false,
     leerPiesImagen: true
   };
+
+  // ------------------------------------------------------------------
+  // Tema (claro / oscuro) de las páginas de la extensión
+  // ------------------------------------------------------------------
+  //
+  // La verdad vive en chrome.storage.sync (viaja entre tus equipos), pero
+  // leerla es asíncrono y el popup se abre y se pinta antes de la respuesta.
+  // Para que no dé un fogonazo del tema anterior guardamos también una copia
+  // en localStorage, que sí se lee al instante, y la aplicamos nada más
+  // cargar este script.
+  //
+  // OJO: este archivo también se inyecta en TODAS las páginas web, y ahí no
+  // debemos tocar nada. Por eso solo se aplica el tema si el documento lo pide
+  // explícitamente, con un `data-tema` puesto a mano en el HTML — cosa que
+  // solo hacen popup.html y reader.html.
+
+  const CLAVE_TEMA_CACHE = 'lector-tts:tema';
+
+  /** Normaliza cualquier cosa a 'claro' u 'oscuro'. */
+  function normalizarTema(t) {
+    return t === 'claro' ? 'claro' : 'oscuro';
+  }
+
+  /** Pinta el tema en el documento y refresca la copia rápida. */
+  function aplicarTema(tema) {
+    const t = normalizarTema(tema);
+    try {
+      const raiz = global.document && global.document.documentElement;
+      if (raiz && raiz.hasAttribute('data-tema')) raiz.setAttribute('data-tema', t);
+    } catch (e) { /* nada */ }
+    try {
+      if (global.localStorage) global.localStorage.setItem(CLAVE_TEMA_CACHE, t);
+    } catch (e) { /* modo incógnito o almacenamiento bloqueado: da igual */ }
+    return t;
+  }
+
+  // Tema de la copia rápida, ya mismo, antes de que se pinte nada.
+  try {
+    const raiz = global.document && global.document.documentElement;
+    if (raiz && raiz.hasAttribute('data-tema') && global.localStorage) {
+      const guardado = global.localStorage.getItem(CLAVE_TEMA_CACHE);
+      if (guardado) raiz.setAttribute('data-tema', normalizarTema(guardado));
+    }
+  } catch (e) { /* nada */ }
 
   /**
    * Qué se lee y qué se salta. Se define aquí una sola vez para que el popup y
@@ -703,6 +750,8 @@
   global.LectorTTS = {
     AJUSTES_DEFECTO: AJUSTES_DEFECTO,
     OPCIONES_LECTURA: OPCIONES_LECTURA,
+    aplicarTema: aplicarTema,
+    normalizarTema: normalizarTema,
     VOCES_NEURALES: VOCES_NEURALES,
     esVozNeural: esVozNeural,
     idPiper: idPiper,

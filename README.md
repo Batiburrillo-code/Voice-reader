@@ -40,12 +40,17 @@ Funciona con **una sola base de código** en Chrome, Brave, Chromium,
   ves en qué página estás (p. ej. «3 / 12»).
 - **Tú decides qué se lee**: los **números de página**, las **cabeceras**, los
   **pies** y los **pies de imagen** («Figura 3. …») se detectan por separado y
-  cada uno tiene su interruptor, en el popup y en el botón **Qué se lee** del
-  lector de PDF. Lo que no marques, la voz se lo salta: así no interrumpe una
-  frase con un «17» ni repite el título del libro en cada hoja. De fábrica se
-  callan números, cabeceras y pies, y **sí** se leen los pies de imagen.
-  El cambio se aplica **al vuelo**: el lector rehace el texto y sigue por la
-  misma frase, sin recargar ni volver a empezar.
+  cada uno tiene su interruptor. Están en la **tuerca ⚙**, tanto en el popup
+  como en el lector de PDF, dentro del desplegable **¿Qué se lee?**. Lo que no
+  marques, la voz se lo salta: así no interrumpe una frase con un «17» ni repite
+  el título del libro en cada hoja. De fábrica se callan números, cabeceras y
+  pies, y **sí** se leen los pies de imagen. El cambio se aplica **al vuelo**:
+  el lector rehace el texto y sigue por la misma frase, sin recargar ni volver
+  a empezar.
+- **Tema claro y oscuro** ☀/☾: se cambia desde la misma **tuerca ⚙**, en el
+  popup o en el lector de PDF. La preferencia se guarda y vale para los dos
+  sitios. (La barrita flotante de las páginas web se queda oscura: va encima de
+  webs ajenas, donde el tema de la extensión no pinta nada.)
 - **Navegación libre mientras lee** 🧭: en el PDF, por defecto la vista NO te
   persigue — puedes hojear el documento tranquilamente mientras la voz sigue
   leyendo. Si quieres que la vista acompañe a la lectura, pulsa el botón
@@ -134,7 +139,8 @@ gratis:
 | Pausar / seguir                | Botón **⏯** de la barrita flotante o del popup             |
 | Saltar de frase                | Botones **⏮ / ⏭**, o clic directamente sobre la frase en el texto |
 | Cambiar voz / velocidad        | Selectores del popup (se guardan solos)                    |
-| Que no lea números de página, cabeceras, pies o pies de imagen | Popup → **Qué se lee** · en el lector de PDF, botón **Qué se lee** |
+| Que no lea números de página, cabeceras, pies o pies de imagen | Tuerca **⚙** → **¿Qué se lee?** (en el popup o en el lector de PDF) |
+| Cambiar a tema claro u oscuro  | Tuerca **⚙** → **Apariencia** (en el popup o en el lector de PDF) |
 | Voz mucho más humana           | Popup → Voz → grupo **🌟 Neuronales** (espera la descarga la 1ª vez) |
 | Leer un PDF                    | Abro el PDF en una pestaña → icono 🔊 → **📄 Leer este PDF** |
 | Leer un PDF de mi disco        | Lector de PDF → **📂 Abrir PDF…**                          |
@@ -190,7 +196,7 @@ Voice-reader/
 ├── voces-extra.js       # registra voces Piper que no están en el mirror por defecto
 ├── content.js           # resaltado sobre el texto de la página + barrita flotante
 ├── tts-frame.html/.js   # iframe oculto que sintetiza las voces neuronales
-├── popup.html/.js       # controles (voz, velocidad, qué se lee, transporte)
+├── popup.html/.js       # controles (voz, velocidad, tuerca de ajustes, transporte)
 ├── reader.html/.js      # lector de PDFs
 ├── VOCES.md             # investigación de voces (Piper vs Kokoro vs otras)
 ├── icons/               # iconos de la extensión

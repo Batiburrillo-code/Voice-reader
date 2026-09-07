@@ -1,101 +1,213 @@
 <!DOCTYPE html>
-<html lang="es">
+<html lang="es" data-tema="oscuro">
 <head>
   <meta charset="utf-8">
   <title>Lector TTS — Lector de PDF</title>
+  <!-- El motor va en el <head> a propósito: al cargarse aplica el tema que
+       tenía guardado ANTES de que se pinte nada, y así el lector no da un
+       fogonazo del tema anterior al abrirse. -->
+  <script src="speech-engine.js"></script>
   <style>
     /* ---- Lector de PDF: el documento se ve como en el visor del navegador
        (páginas renderizadas) y el resaltado se pinta ENCIMA del propio PDF --- */
+
+    /* Todo el color vive aquí. El tema lo cambia `data-tema` en el <html>, que
+       pone speech-engine.js según lo guardado (y el botón de la tuerca). */
+    :root {
+      color-scheme: dark;
+      --fondo: #1b1b23;
+      --fondo-barra-a: #23232e;
+      --fondo-barra-b: #1f1f28;
+      --fondo-panel: #20202a;
+      --fondo-control: #2a2a38;
+      --fondo-control-2: #363648;
+      --fondo-flotante: #23232e;
+      --fondo-estado: rgba(42, 42, 56, .96);
+      --borde: #3a3a4e;
+      --borde-fuerte: #34344a;
+      --borde-suave: #2c2c3a;
+      --borde-pagina: transparent;
+      --texto: #e9e9ef;
+      --texto-fuerte: #fff;
+      --texto-suave: #9a9aac;
+      --texto-tenue: #6e6e80;
+      --texto-indice: #cfcfdd;
+      --acento: #7c5cff;
+      --acento-2: #5a8bff;
+      --acento-tinte: rgba(124, 92, 255, .20);
+      --acento-halo: rgba(124, 92, 255, .28);
+      --error-borde: #b3453a;
+      --error-texto: #ffb9ae;
+      --sombra-barra: 0 4px 18px rgba(0, 0, 0, .35);
+      --sombra-flotante: 0 10px 30px rgba(0, 0, 0, .5);
+      --sombra-pagina: 0 6px 26px rgba(0, 0, 0, .5);
+      --sombra-mini: 0 2px 10px rgba(0, 0, 0, .45);
+      --sombra-estado: 0 8px 24px rgba(0, 0, 0, .4);
+    }
+    :root[data-tema="claro"] {
+      color-scheme: light;
+      --fondo: #eef0f5;
+      --fondo-barra-a: #fff;
+      --fondo-barra-b: #f4f5f9;
+      --fondo-panel: #f7f8fb;
+      --fondo-control: #fff;
+      --fondo-control-2: #e7e9f2;
+      --fondo-flotante: #fff;
+      --fondo-estado: rgba(255, 255, 255, .97);
+      --borde: #d2d4e0;
+      --borde-fuerte: #dcdee8;
+      --borde-suave: #e6e8f0;
+      --borde-pagina: #d8dae4;
+      --texto: #23232e;
+      --texto-fuerte: #101018;
+      --texto-suave: #5d5d73;
+      --texto-tenue: #6b6b85;
+      --texto-indice: #3a3a4c;
+      /* Un morado algo más oscuro: el texto blanco encima necesita contraste. */
+      --acento: #6544ee;
+      --acento-2: #3f74ee;
+      --acento-tinte: rgba(101, 68, 238, .14);
+      --acento-halo: rgba(101, 68, 238, .22);
+      --error-borde: #c8523f;
+      --error-texto: #8f2c1c;
+      --sombra-barra: 0 2px 10px rgba(30, 30, 60, .10);
+      --sombra-flotante: 0 12px 30px rgba(30, 30, 60, .18);
+      --sombra-pagina: 0 4px 18px rgba(30, 30, 60, .16);
+      --sombra-mini: 0 2px 8px rgba(30, 30, 60, .16);
+      --sombra-estado: 0 8px 24px rgba(30, 30, 60, .14);
+    }
+
     * { box-sizing: border-box; margin: 0; padding: 0; }
+    /* Que `hidden` gane SIEMPRE. Sin esto, cualquier regla con `display` (y más
+       si es un selector de id) deja visible algo que el código cree oculto. */
+    [hidden] { display: none !important; }
     html, body { height: 100%; }
     body {
-      background: #1b1b23; color: #e9e9ef;
+      background: var(--fondo); color: var(--texto);
       font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
       display: flex; flex-direction: column;
     }
 
     /* Barra superior con los controles */
     header {
-      flex: none; z-index: 10;
-      background: linear-gradient(180deg, #23232e, #1f1f28);
-      border-bottom: 1px solid #34344a;
+      flex: none; z-index: 10; position: relative;   /* ancla del panel de ajustes */
+      background: linear-gradient(180deg, var(--fondo-barra-a), var(--fondo-barra-b));
+      border-bottom: 1px solid var(--borde-fuerte);
       padding: 10px 16px;
       display: flex; flex-wrap: wrap; align-items: center; gap: 9px;
-      box-shadow: 0 4px 18px rgba(0, 0, 0, .35);
+      box-shadow: var(--sombra-barra);
     }
     .titulo {
       flex: 1 1 180px; min-width: 120px;
-      font-size: 14px; font-weight: 650; color: #fff;
+      font-size: 14px; font-weight: 650; color: var(--texto-fuerte);
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
     .titulo::before { content: '📄 '; }
     button, select {
-      appearance: none; border: 1px solid #3a3a4e; background: #2a2a38;
-      color: #e9e9ef; border-radius: 10px; cursor: pointer;
+      appearance: none; border: 1px solid var(--borde); background: var(--fondo-control);
+      color: var(--texto); border-radius: 10px; cursor: pointer;
       font-size: 13px; padding: 8px 12px; font-family: inherit;
       transition: background .15s;
     }
-    button:hover { background: #363648; }
+    button:hover { background: var(--fondo-control-2); }
     .primario {
-      background: linear-gradient(135deg, #7c5cff, #5a8bff);
+      background: linear-gradient(135deg, var(--acento), var(--acento-2));
       border-color: transparent; color: #fff; font-size: 15px;
     }
     .primario:hover { filter: brightness(1.12); }
     select { max-width: 230px; font-size: 12px; }
     .grupo {
       display: flex; align-items: center; gap: 4px;
-      background: #2a2a38; border: 1px solid #3a3a4e;
+      background: var(--fondo-control); border: 1px solid var(--borde);
       border-radius: 10px; padding: 3px 6px;
     }
-    .grupo .etiqueta { font-size: 10.5px; color: #9a9aac; padding: 0 3px; }
+    .grupo .etiqueta { font-size: 10.5px; color: var(--texto-suave); padding: 0 3px; }
     .grupo button {
       border: none; background: transparent; padding: 4px 7px;
       font-size: 14px; font-weight: 700; border-radius: 7px;
     }
-    .grupo button:hover { background: #3a3a4e; }
-    .grupo .valor { font-size: 12.5px; font-weight: 650; color: #fff; min-width: 38px; text-align: center; }
-    #progreso { font-size: 12px; color: #9a9aac; min-width: 60px; text-align: center; }
+    .grupo button:hover { background: var(--fondo-control-2); }
+    .grupo .valor { font-size: 12.5px; font-weight: 650; color: var(--texto-fuerte); min-width: 38px; text-align: center; }
+    #progreso { font-size: 12px; color: var(--texto-suave); min-width: 60px; text-align: center; }
 
-    /* "Qué se lee": botón de la barra + panelito que se descuelga de él */
-    .con-panel { position: relative; }
-    #btn-que-se-lee[aria-expanded="true"] {
-      background: linear-gradient(135deg, #7c5cff, #5a8bff);
-      border-color: transparent; color: #fff;
+    /* ---- Tuerca de ajustes: botón de la barra + panel que se descuelga ----
+       El panel cuelga del borde derecho de LA BARRA, no del botón. Si colgara
+       del botón, al envolverse la barra en ventanas estrechas la tuerca cae a
+       la izquierda y el panel se salía de la pantalla. */
+    #panel-ajustes {
+      position: absolute; top: 100%; right: 16px; margin-top: 7px; z-index: 30;
+      width: 296px; max-width: calc(100vw - 32px); padding: 9px;
+      background: var(--fondo-flotante); border: 1px solid var(--borde);
+      border-radius: 12px; box-shadow: var(--sombra-flotante);
+      display: flex; flex-direction: column; gap: 10px;
     }
-    #panel-que-se-lee {
-      position: absolute; top: calc(100% + 7px); right: 0; z-index: 30;
-      width: 290px; padding: 8px;
-      background: #23232e; border: 1px solid #3a3a4e; border-radius: 12px;
-      box-shadow: 0 10px 30px rgba(0, 0, 0, .5);
-      display: flex; flex-direction: column; gap: 2px;
+    .ajuste-titulo {
+      font-size: 10px; font-weight: 700; letter-spacing: .6px;
+      text-transform: uppercase; color: var(--texto-tenue); padding: 0 3px 5px;
     }
-    #panel-que-se-lee .cabecera {
-      font-size: 10.5px; color: #6e6e80; padding: 3px 7px 5px;
+
+    /* Interruptor de dos posiciones (claro / oscuro) */
+    .segmentado {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 4px;
+      background: var(--fondo-control); border: 1px solid var(--borde);
+      border-radius: 10px; padding: 3px;
     }
+    .segmentado button {
+      border: none; background: transparent; color: var(--texto-suave);
+      border-radius: 7px; padding: 7px 6px; font-size: 12px; font-weight: 650;
+    }
+    .segmentado button:hover { background: var(--fondo-control-2); color: var(--texto); }
+    .segmentado button[aria-pressed="true"] {
+      background: linear-gradient(135deg, var(--acento), var(--acento-2)); color: #fff;
+    }
+    .segmentado button[aria-pressed="true"]:hover { filter: brightness(1.12); }
+
+    /* Sección plegable dentro del panel (el «¿Qué se lee?») */
+    .plegable { border-top: 1px solid var(--borde-suave); padding-top: 8px; }
+    .plegable-cabeza {
+      width: 100%; display: flex; align-items: center; gap: 7px;
+      border: none; background: transparent; color: var(--texto);
+      padding: 5px 4px; border-radius: 8px;
+      font-size: 12.5px; font-weight: 650; text-align: left;
+    }
+    .plegable-cabeza:hover { background: var(--fondo-control-2); }
+    .plegable-cabeza .chevron {
+      flex: none; font-size: 9px; color: var(--texto-suave);
+      transition: transform .15s;
+    }
+    .plegable-cabeza[aria-expanded="true"] .chevron { transform: rotate(90deg); }
+    .plegable-cabeza .resumen {
+      margin-left: auto; font-size: 10.5px; font-weight: 500; color: var(--texto-tenue);
+    }
+    .plegable-cuerpo { display: flex; flex-direction: column; gap: 2px; padding-top: 3px; }
+    .plegable-cuerpo .pista {
+      font-size: 10.5px; color: var(--texto-tenue); padding: 2px 7px 5px; line-height: 1.4;
+    }
+
     .opcion-lectura {
       display: grid; grid-template-columns: auto 1fr; gap: 3px 8px;
       align-items: center; padding: 6px 7px; border-radius: 8px; cursor: pointer;
     }
-    .opcion-lectura:hover { background: #2a2a38; }
+    .opcion-lectura:hover { background: var(--fondo-control-2); }
     .opcion-lectura input {
-      accent-color: #7c5cff; width: 15px; height: 15px; margin: 0; cursor: pointer;
+      accent-color: var(--acento); width: 15px; height: 15px; margin: 0; cursor: pointer;
     }
-    .opcion-lectura .nombre { font-size: 12.5px; font-weight: 600; color: #e9e9ef; }
+    .opcion-lectura .nombre { font-size: 12.5px; font-weight: 600; color: var(--texto); }
     .opcion-lectura .ayuda {
-      grid-column: 2; font-size: 10.5px; color: #6e6e80; line-height: 1.35;
+      grid-column: 2; font-size: 10.5px; color: var(--texto-tenue); line-height: 1.35;
     }
 
-    /* Botón de solo icono (☰ del panel) */
+    /* Botón de solo icono (☰ del panel, ⚙ de ajustes) */
     .icono { font-size: 15px; line-height: 1; padding: 8px 11px; }
     .icono[aria-expanded="true"] {
-      background: linear-gradient(135deg, #7c5cff, #5a8bff);
+      background: linear-gradient(135deg, var(--acento), var(--acento-2));
       border-color: transparent; color: #fff;
     }
     .icono[aria-expanded="true"]:hover { filter: brightness(1.12); }
     /* Indicador de la página que se está viendo */
     .pagina-actual {
-      font-size: 12.5px; font-weight: 650; color: #e9e9ef;
-      background: #2a2a38; border: 1px solid #3a3a4e;
+      font-size: 12.5px; font-weight: 650; color: var(--texto);
+      background: var(--fondo-control); border: 1px solid var(--borde);
       border-radius: 999px; padding: 5px 11px; white-space: nowrap;
     }
 
@@ -106,26 +218,26 @@
     #panel {
       flex: none; width: 214px; min-height: 0;
       display: flex; flex-direction: column;
-      background: #20202a; border-right: 1px solid #34344a;
+      background: var(--fondo-panel); border-right: 1px solid var(--borde-fuerte);
     }
     #panel.oculto { display: none; }
     .panel-tabs {
       display: flex; gap: 5px; padding: 8px;
-      border-bottom: 1px solid #2c2c3a; flex: none;
+      border-bottom: 1px solid var(--borde-suave); flex: none;
     }
     .panel-tabs button {
       flex: 1; padding: 7px 4px; font-size: 11.5px; font-weight: 650;
       border-radius: 9px; border: 1px solid transparent;
-      background: transparent; color: #9a9aac; white-space: nowrap;
+      background: transparent; color: var(--texto-suave); white-space: nowrap;
     }
-    .panel-tabs button:hover { background: #2a2a38; color: #e9e9ef; }
+    .panel-tabs button:hover { background: var(--fondo-control-2); color: var(--texto); }
     .panel-tabs button[aria-selected="true"] {
-      background: linear-gradient(135deg, #7c5cff, #5a8bff);
+      background: linear-gradient(135deg, var(--acento), var(--acento-2));
       color: #fff; border-color: transparent;
     }
     .panel-cuerpo { flex: 1; overflow-y: auto; padding: 10px; min-height: 0; }
     .panel-cuerpo.oculto { display: none; }
-    .panel-vacio { font-size: 12px; line-height: 1.55; color: #9a9aac; padding: 6px 2px; }
+    .panel-vacio { font-size: 12px; line-height: 1.55; color: var(--texto-suave); padding: 6px 2px; }
 
     /* Miniaturas de página */
     .mini {
@@ -135,39 +247,39 @@
     .mini .marco {
       display: block; margin: 0 auto; background: #fff;
       border: 2px solid transparent; border-radius: 5px; overflow: hidden;
-      box-shadow: 0 2px 10px rgba(0, 0, 0, .45);
+      box-shadow: var(--sombra-mini);
       transition: border-color .15s, box-shadow .15s;
     }
     .mini canvas { display: block; width: 100%; height: 100%; }
     .mini .num {
       display: block; text-align: center; margin-top: 4px;
-      font-size: 11px; color: #9a9aac;
+      font-size: 11px; color: var(--texto-suave);
     }
-    .mini:hover .marco { border-color: #5a5a78; }
+    .mini:hover .marco { border-color: var(--acento); }
     .mini.actual .marco {
-      border-color: #7c5cff;
-      box-shadow: 0 0 0 3px rgba(124, 92, 255, .28), 0 2px 10px rgba(0, 0, 0, .45);
+      border-color: var(--acento);
+      box-shadow: 0 0 0 3px var(--acento-halo), var(--sombra-mini);
     }
-    .mini.actual .num { color: #fff; font-weight: 700; }
-    .mini:focus-visible .marco { border-color: #9a86ff; }
+    .mini.actual .num { color: var(--texto-fuerte); font-weight: 700; }
+    .mini:focus-visible .marco { border-color: var(--acento-2); }
 
     /* Índice (marcadores del PDF) */
     .idx-fila { display: flex; align-items: flex-start; gap: 2px; }
     .idx-chev {
       flex: none; width: 20px; padding: 3px 0; border: none; background: transparent;
-      color: #9a9aac; font-size: 10px; line-height: 1.5; border-radius: 6px;
+      color: var(--texto-suave); font-size: 10px; line-height: 1.5; border-radius: 6px;
     }
-    .idx-chev:hover { background: #2a2a38; color: #e9e9ef; }
+    .idx-chev:hover { background: var(--fondo-control-2); color: var(--texto); }
     .idx-chev.hueco { visibility: hidden; cursor: default; }
     .idx-titulo {
       flex: 1; min-width: 0; text-align: left; border: none; background: transparent;
-      color: #cfcfdd; font-size: 12px; line-height: 1.45; padding: 4px 6px;
+      color: var(--texto-indice); font-size: 12px; line-height: 1.45; padding: 4px 6px;
       border-radius: 7px; font-weight: 500;
     }
-    .idx-titulo:hover { background: #2a2a38; color: #fff; }
+    .idx-titulo:hover { background: var(--fondo-control-2); color: var(--texto-fuerte); }
     .idx-fila.actual .idx-titulo {
-      background: rgba(124, 92, 255, .20); color: #fff; font-weight: 700;
-      box-shadow: inset 2px 0 0 #7c5cff;
+      background: var(--acento-tinte); color: var(--texto-fuerte); font-weight: 700;
+      box-shadow: inset 2px 0 0 var(--acento);
     }
     .idx-hijos.oculto { display: none; }
 
@@ -178,7 +290,7 @@
     @media (max-width: 720px) {
       #panel {
         position: absolute; top: 0; bottom: 0; left: 0; z-index: 8;
-        box-shadow: 0 0 30px rgba(0, 0, 0, .6);
+        box-shadow: var(--sombra-flotante);
       }
     }
     /* Respeta a quien pide menos animación */
@@ -186,9 +298,12 @@
       .mini .marco { transition: none; }
     }
     #visor { display: flex; flex-direction: column; align-items: center; gap: 18px; }
+    /* La hoja del PDF se queda blanca en los dos temas: es el documento, no
+       la interfaz. En claro se le pone borde para que no se funda con el fondo. */
     .pagina {
       position: relative; background: #fff;
-      box-shadow: 0 6px 26px rgba(0, 0, 0, .5);
+      box-shadow: var(--sombra-pagina);
+      border: 1px solid var(--borde-pagina);
       border-radius: 3px; overflow: hidden;
     }
     .pagina canvas { display: block; }
@@ -208,7 +323,7 @@
 
     /* Resaltados sobre el PDF: solo fondos translúcidos, para que el texto
        del documento siga leyéndose debajo. */
-    ::highlight(lector-parrafo)  { background-color: rgba(124, 92, 255, .10); }
+    ::highlight(lector-parrafo)  { background-color: rgba(124, 92, 255, .12); }
     ::highlight(lector-oracion)  { background-color: rgba(124, 92, 255, .28); }
     ::highlight(lector-palabra)  { background-color: rgba(255, 179, 71, .55); }
 
@@ -216,14 +331,14 @@
     #estado {
       position: sticky; top: 8px; z-index: 5;
       max-width: 720px; margin: 0 auto 14px;
-      font-size: 14px; line-height: 1.6; color: #e6e6f0;
-      background: rgba(42, 42, 56, .96); border: 1px solid #3a3a4e;
+      font-size: 14px; line-height: 1.6; color: var(--texto);
+      background: var(--fondo-estado); border: 1px solid var(--borde);
       border-radius: 12px; padding: 13px 16px;
-      box-shadow: 0 8px 24px rgba(0, 0, 0, .4);
+      box-shadow: var(--sombra-estado);
     }
     #estado.oculto { display: none; }
-    #estado.error { border-color: #b3453a; color: #ffb9ae; }
-    #estado b { color: #fff; }
+    #estado.error { border-color: var(--error-borde); color: var(--error-texto); }
+    #estado b { color: var(--texto-fuerte); }
   </style>
 </head>
 <body>
@@ -252,19 +367,37 @@
       <button id="btn-vel-mas">+</button>
     </div>
 
-    <!-- Qué se lee: números de página, cabeceras, pies y pies de imagen.
-         Las casillas las pinta reader.js desde LectorTTS.OPCIONES_LECTURA. -->
-    <div class="con-panel">
-      <button id="btn-que-se-lee" aria-expanded="false" aria-controls="panel-que-se-lee"
-              title="Elegir qué partes del documento se leen en voz alta">Qué se lee</button>
-      <div id="panel-que-se-lee" role="group" aria-label="Qué se lee" hidden>
-        <div class="cabecera">Lo que no marques se salta al leer.</div>
-      </div>
-    </div>
-
     <select id="sel-voz" title="Voz"></select>
     <button id="btn-abrir" title="Abrir un PDF de tu equipo">📂 Abrir PDF…</button>
     <span id="progreso"></span>
+
+    <!-- Ajustes: apariencia (claro/oscuro) y qué se lee. Las casillas las pinta
+         reader.js desde LectorTTS.OPCIONES_LECTURA. -->
+    <div class="con-panel">
+      <button id="btn-ajustes" class="icono" aria-expanded="false" aria-controls="panel-ajustes"
+              aria-label="Ajustes" title="Ajustes: apariencia y qué se lee">⚙</button>
+      <div id="panel-ajustes" role="group" aria-label="Ajustes" hidden>
+        <div>
+          <div class="ajuste-titulo">Apariencia</div>
+          <div class="segmentado" id="segmento-tema" role="group" aria-label="Tema">
+            <button type="button" data-tema="claro" aria-pressed="false">☀ Claro</button>
+            <button type="button" data-tema="oscuro" aria-pressed="true">☾ Oscuro</button>
+          </div>
+        </div>
+
+        <div class="plegable">
+          <button type="button" class="plegable-cabeza" id="cabeza-que-se-lee"
+                  aria-expanded="false" aria-controls="lista-lectura">
+            <span class="chevron" aria-hidden="true">▶</span>
+            <span>¿Qué se lee?</span>
+            <span class="resumen" id="resumen-que-se-lee"></span>
+          </button>
+          <div class="plegable-cuerpo" id="lista-lectura" hidden>
+            <div class="pista">Lo que no marques se salta al leer en voz alta.</div>
+          </div>
+        </div>
+      </div>
+    </div>
   </header>
 
   <div class="cuerpo">
@@ -289,9 +422,9 @@
   <!-- Selector de archivo oculto, para PDFs locales -->
   <input type="file" id="input-archivo" accept="application/pdf,.pdf" style="display:none">
 
-  <!-- Motor de lectura compartido (script clásico) y lógica del lector (módulo,
-       porque pdf.js v4 y vits-web se distribuyen como módulos ES). Todo local. -->
-  <script src="speech-engine.js"></script>
+  <!-- El motor compartido (script clásico) ya se cargó en el <head>, para que el
+       tema se aplique antes del primer pintado. Aquí solo queda la lógica del
+       lector, que es módulo ES porque pdf.js v4 y vits-web lo son. Todo local. -->
   <script type="module" src="reader.js"></script>
 </body>
 </html>

@@ -1,122 +1,255 @@
 <!DOCTYPE html>
-<html lang="es">
+<html lang="es" data-tema="oscuro">
 <head>
   <meta charset="utf-8">
   <title>Lector TTS</title>
+  <!-- El motor va en el <head> a propósito: al cargarse aplica el tema que
+       tenía guardado ANTES de que se pinte nada, y así el popup no da un
+       fogonazo del tema anterior cada vez que se abre. -->
+  <script src="speech-engine.js"></script>
   <style>
-    /* Popup oscuro y amigable, con acento morado */
+    /* Todo el color vive aquí. El tema lo cambia `data-tema` en el <html>, que
+       pone speech-engine.js según lo guardado (y la tuerca del titulo). */
+    :root {
+      color-scheme: dark;
+      --fondo-a: #1d1d26;
+      --fondo-b: #17171d;
+      --fondo-hundido: #1c1c26;
+      --fondo-control: #262633;
+      --fondo-control-2: #363648;
+      --fondo-control-hover: #2c2c3b;
+      --pista-slider: #343442;
+      --borde: #3a3a4e;
+      --borde-suave: #2c2c36;
+      --texto: #e9e9ef;
+      --texto-fuerte: #fff;
+      --texto-suave: #9a9aac;
+      --texto-tenue: #6e6e80;
+      --acento: #7c5cff;
+      --acento-2: #5a8bff;
+      --rojo-a: #e2574a;
+      --rojo-b: #b3453a;
+      --error-texto: #ff9d8f;
+      --sombra-logo: 0 3px 10px rgba(124, 92, 255, .35);
+      --sombra-pulgar: 0 2px 6px rgba(0, 0, 0, .4);
+    }
+    :root[data-tema="claro"] {
+      color-scheme: light;
+      --fondo-a: #fff;
+      --fondo-b: #f2f3f8;
+      --fondo-hundido: #f5f6fa;
+      --fondo-control: #fff;
+      --fondo-control-2: #e7e9f2;
+      --fondo-control-hover: #eef0f6;
+      --pista-slider: #dcdee9;
+      --borde: #d2d4e0;
+      --borde-suave: #e6e8f0;
+      --texto: #23232e;
+      --texto-fuerte: #101018;
+      --texto-suave: #5d5d73;
+      --texto-tenue: #6b6b85;
+      /* Un morado algo más oscuro: el texto blanco encima necesita contraste. */
+      --acento: #6544ee;
+      --acento-2: #3f74ee;
+      --rojo-a: #d1483a;
+      --rojo-b: #a83a2f;
+      --error-texto: #8f2c1c;
+      --sombra-logo: 0 3px 10px rgba(101, 68, 238, .28);
+      --sombra-pulgar: 0 2px 6px rgba(30, 30, 60, .25);
+    }
+
     * { box-sizing: border-box; margin: 0; padding: 0; }
+    /* Que `hidden` gane SIEMPRE, por encima de cualquier `display` propio. */
+    [hidden] { display: none !important; }
     body {
       width: 340px;
-      background: linear-gradient(180deg, #1d1d26, #17171d 60%);
-      color: #e9e9ef;
+      background: linear-gradient(180deg, var(--fondo-a), var(--fondo-b) 60%);
+      color: var(--texto);
       font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
       font-size: 13px;
       padding: 14px 14px 12px;
     }
     h1 {
-      font-size: 15px; font-weight: 700; color: #fff;
+      font-size: 15px; font-weight: 700; color: var(--texto-fuerte);
       display: flex; align-items: center; gap: 9px; margin-bottom: 13px;
     }
     .logo {
       width: 26px; height: 26px; border-radius: 8px;
-      background: linear-gradient(135deg, #7c5cff, #5a8bff);
+      background: linear-gradient(135deg, var(--acento), var(--acento-2));
       display: grid; place-items: center; font-size: 14px;
-      box-shadow: 0 3px 10px rgba(124, 92, 255, .35);
+      box-shadow: var(--sombra-logo);
     }
-    label { display: block; font-size: 11px; color: #9a9aac; margin: 11px 0 5px; letter-spacing: .2px; }
+
+    /* ---- Tuerca de ajustes (al final del título) ---- */
+    #btn-ajustes {
+      margin-left: auto; padding: 6px 9px; font-size: 14px; line-height: 1;
+      border-radius: 9px;
+    }
+    #btn-ajustes[aria-expanded="true"] {
+      background: linear-gradient(135deg, var(--acento), var(--acento-2));
+      border-color: transparent; color: #fff;
+    }
+    #btn-ajustes[aria-expanded="true"]:hover { filter: brightness(1.12); }
+    #panel-ajustes {
+      display: flex; flex-direction: column; gap: 10px;
+      border: 1px solid var(--borde); border-radius: 11px;
+      padding: 10px; background: var(--fondo-hundido);
+    }
+    .ajuste-titulo {
+      font-size: 10px; font-weight: 700; letter-spacing: .6px;
+      text-transform: uppercase; color: var(--texto-tenue); margin-bottom: 5px;
+    }
+    .segmentado {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 4px;
+      background: var(--fondo-control); border: 1px solid var(--borde);
+      border-radius: 10px; padding: 3px;
+    }
+    .segmentado button {
+      border: none; background: transparent; color: var(--texto-suave);
+      border-radius: 7px; padding: 7px 6px; font-size: 12px; font-weight: 650;
+    }
+    .segmentado button:hover { background: var(--fondo-control-2); color: var(--texto); }
+    .segmentado button[aria-pressed="true"] {
+      background: linear-gradient(135deg, var(--acento), var(--acento-2)); color: #fff;
+    }
+    .segmentado button[aria-pressed="true"]:hover { filter: brightness(1.12); }
+
+    /* Sección plegable dentro de la tuerca (el «¿Qué se lee?») */
+    .plegable { border-top: 1px solid var(--borde-suave); padding-top: 8px; }
+    .plegable-cabeza {
+      width: 100%; display: flex; align-items: center; gap: 7px;
+      border: none; background: transparent; color: var(--texto);
+      padding: 5px 4px; border-radius: 8px;
+      font-size: 12.5px; font-weight: 650; text-align: left;
+    }
+    .plegable-cabeza:hover { background: var(--fondo-control-2); }
+    .plegable-cabeza .chevron {
+      flex: none; font-size: 9px; color: var(--texto-suave); transition: transform .15s;
+    }
+    .plegable-cabeza[aria-expanded="true"] .chevron { transform: rotate(90deg); }
+    .plegable-cabeza .resumen {
+      margin-left: auto; font-size: 10.5px; font-weight: 500; color: var(--texto-tenue);
+    }
+    .plegable-cuerpo { display: flex; flex-direction: column; gap: 2px; padding-top: 3px; }
+    .plegable-cuerpo .pista {
+      font-size: 10.5px; color: var(--texto-tenue); padding: 2px 7px 5px; line-height: 1.4;
+    }
+
+    label { display: block; font-size: 11px; color: var(--texto-suave); margin: 11px 0 5px; letter-spacing: .2px; }
     select {
       width: 100%; padding: 9px; border-radius: 10px;
-      border: 1px solid #3a3a4e; background: #262633; color: #e9e9ef;
+      border: 1px solid var(--borde); background: var(--fondo-control); color: var(--texto);
       font-size: 12.5px; cursor: pointer;
     }
-    select:hover { background: #2c2c3b; }
+    select:hover { background: var(--fondo-control-hover); }
 
     /* Slider + contadores de −/+ 0.1 */
     .fila-slider { display: flex; align-items: center; gap: 7px; }
-    .fila-slider output { min-width: 40px; text-align: right; color: #fff; font-weight: 650; font-size: 12.5px; }
+    .fila-slider output { min-width: 40px; text-align: right; color: var(--texto-fuerte); font-weight: 650; font-size: 12.5px; }
     .paso {
-      appearance: none; border: 1px solid #3a3a4e; background: #262633;
-      color: #e9e9ef; border-radius: 8px; cursor: pointer;
+      appearance: none; border: 1px solid var(--borde); background: var(--fondo-control);
+      color: var(--texto); border-radius: 8px; cursor: pointer;
       width: 26px; height: 26px; font-size: 14px; font-weight: 700; line-height: 1;
       transition: background .15s;
     }
-    .paso:hover { background: #363648; }
+    .paso:hover { background: var(--fondo-control-2); }
     input[type="range"] {
       flex: 1; appearance: none; -webkit-appearance: none; height: 6px;
-      background: linear-gradient(90deg, #7c5cff, #5a8bff) no-repeat #343442;
+      background: linear-gradient(90deg, var(--acento), var(--acento-2)) no-repeat var(--pista-slider);
       background-size: 30% 100%;
       border-radius: 3px; outline: none; cursor: pointer;
     }
     input[type="range"]::-webkit-slider-thumb {
       -webkit-appearance: none; width: 17px; height: 17px; border-radius: 50%;
-      background: #fff; border: 3px solid #7c5cff; cursor: pointer;
-      box-shadow: 0 2px 6px rgba(0, 0, 0, .4);
+      background: #fff; border: 3px solid var(--acento); cursor: pointer;
+      box-shadow: var(--sombra-pulgar);
     }
     input[type="range"]::-moz-range-thumb {
       width: 13px; height: 13px; border-radius: 50%;
-      background: #fff; border: 3px solid #7c5cff; cursor: pointer;
+      background: #fff; border: 3px solid var(--acento); cursor: pointer;
     }
     /* Control desactivado: gris e inútil */
     input[type="range"]:disabled { opacity: .4; cursor: not-allowed; }
     .paso:disabled { opacity: .4; cursor: not-allowed; }
-    .paso:disabled:hover { background: #262633; }
+    .paso:disabled:hover { background: var(--fondo-control); }
 
-    /* "Qué se lee": lista de interruptores, uno por parte del documento */
-    .lista-lectura {
-      display: flex; flex-direction: column; gap: 2px;
-      border: 1px solid #3a3a4e; border-radius: 11px;
-      padding: 6px; background: #1c1c26;
-    }
+    /* "Qué se lee": un interruptor por parte del documento */
     .opcion-lectura {
       display: grid; grid-template-columns: auto 1fr; gap: 4px 8px;
       align-items: center; padding: 6px 7px; border-radius: 8px; cursor: pointer;
     }
-    .opcion-lectura:hover { background: #262633; }
-    .opcion-lectura input { accent-color: #7c5cff; width: 15px; height: 15px; margin: 0; cursor: pointer; }
+    .opcion-lectura:hover { background: var(--fondo-control-2); }
+    .opcion-lectura input { accent-color: var(--acento); width: 15px; height: 15px; margin: 0; cursor: pointer; }
     .opcion-lectura .nombre { font-size: 12.5px; font-weight: 600; }
     .opcion-lectura .ayuda {
-      grid-column: 2; font-size: 10.5px; color: #6e6e80; line-height: 1.35;
+      grid-column: 2; font-size: 10.5px; color: var(--texto-tenue); line-height: 1.35;
     }
 
     .botones { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 15px; }
     button {
-      appearance: none; border: 1px solid #3a3a4e; border-radius: 11px;
-      background: #262633; color: #e9e9ef; cursor: pointer;
+      appearance: none; border: 1px solid var(--borde); border-radius: 11px;
+      background: var(--fondo-control); color: var(--texto); cursor: pointer;
       padding: 10px 8px; font-size: 12.5px; font-weight: 600;
       transition: background .15s, filter .15s;
     }
-    button:hover { background: #363648; }
+    button:hover { background: var(--fondo-control-2); }
     .primario {
-      background: linear-gradient(135deg, #7c5cff, #5a8bff);
+      background: linear-gradient(135deg, var(--acento), var(--acento-2));
       border-color: transparent; color: #fff;
     }
     .primario:hover { filter: brightness(1.12); }
     .transporte { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 8px; }
     .transporte button { font-size: 15px; padding: 9px 4px; }
     #btn-clic { margin-top: 8px; width: 100%; }
-    button.activo { background: linear-gradient(135deg, #7c5cff, #5a8bff); border-color: transparent; color: #fff; }
+    button.activo { background: linear-gradient(135deg, var(--acento), var(--acento-2)); border-color: transparent; color: #fff; }
     button.activo:hover { filter: brightness(1.12); }
     #btn-pdf, #btn-permisos { display: none; margin-top: 8px; width: 100%; }
-    #btn-pdf { background: linear-gradient(135deg, #e2574a, #b3453a); border-color: transparent; color: #fff; }
+    #btn-pdf { background: linear-gradient(135deg, var(--rojo-a), var(--rojo-b)); border-color: transparent; color: #fff; }
     #btn-pdf:hover { filter: brightness(1.1); }
     #estado {
       margin-top: 10px; min-height: 16px; font-size: 11.5px;
-      color: #9a9aac; line-height: 1.45;
+      color: var(--texto-suave); line-height: 1.45;
     }
-    #estado.error { color: #ff9d8f; }
+    #estado.error { color: var(--error-texto); }
     .pie {
-      margin-top: 10px; padding-top: 8px; border-top: 1px solid #2c2c36;
-      font-size: 10.5px; color: #6e6e80; line-height: 1.5;
+      margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--borde-suave);
+      font-size: 10.5px; color: var(--texto-tenue); line-height: 1.5;
     }
     kbd {
-      background: #262633; border: 1px solid #3a3a4e; border-radius: 4px;
+      background: var(--fondo-control); border: 1px solid var(--borde); border-radius: 4px;
       padding: 0 4px; font-family: inherit;
     }
   </style>
 </head>
 <body>
-  <h1><span class="logo">🔊</span> Lector TTS</h1>
+  <h1>
+    <span class="logo">🔊</span> Lector TTS
+    <button id="btn-ajustes" aria-expanded="false" aria-controls="panel-ajustes"
+            aria-label="Ajustes" title="Ajustes: apariencia y qué se lee">⚙</button>
+  </h1>
+
+  <!-- Ajustes: apariencia y qué se lee. Se despliega con la tuerca de arriba. -->
+  <div id="panel-ajustes" role="group" aria-label="Ajustes" hidden>
+    <div>
+      <div class="ajuste-titulo">Apariencia</div>
+      <div class="segmentado" id="segmento-tema" role="group" aria-label="Tema">
+        <button type="button" data-tema="claro" aria-pressed="false">☀ Claro</button>
+        <button type="button" data-tema="oscuro" aria-pressed="true">☾ Oscuro</button>
+      </div>
+    </div>
+
+    <div class="plegable">
+      <button type="button" class="plegable-cabeza" id="cabeza-que-se-lee"
+              aria-expanded="false" aria-controls="lista-lectura">
+        <span class="chevron" aria-hidden="true">▶</span>
+        <span>¿Qué se lee?</span>
+        <span class="resumen" id="resumen-que-se-lee"></span>
+      </button>
+      <div class="plegable-cuerpo" id="lista-lectura" hidden>
+        <div class="pista">Lo que no marques se salta al leer en voz alta.</div>
+      </div>
+    </div>
+  </div>
 
   <!-- Selector de voz: neuronales arriba, luego español del sistema -->
   <label for="sel-voz">Voz</label>
@@ -130,11 +263,6 @@
     <button class="paso" id="btn-vel-mas" title="Subir 0.1">+</button>
     <output id="txt-vel">1.1×</output>
   </div>
-
-  <!-- Qué se lee: las casillas las pinta popup.js desde LectorTTS.OPCIONES_LECTURA,
-       para que el lector de PDF y el popup ofrezcan siempre lo mismo. -->
-  <label>Qué se lee <span style="color:#6e6e80">(lo no marcado se salta)</span></label>
-  <div class="lista-lectura" id="lista-lectura"></div>
 
   <!-- Acciones principales -->
   <div class="botones">
@@ -166,7 +294,8 @@
     Atajos: <kbd>Alt</kbd>+<kbd>L</kbd> lee la selección · <kbd>Alt</kbd>+clic en un texto lo lee desde ahí · Clic derecho → «🔊 Leer selección»
   </div>
 
-  <script src="speech-engine.js"></script>
+  <!-- speech-engine.js ya se cargó en el <head>, para que el tema se aplique
+       antes del primer pintado. -->
   <script src="popup.js"></script>
 </body>
 </html>
