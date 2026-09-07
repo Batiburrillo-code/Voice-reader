@@ -17,7 +17,7 @@ Funciona con **una sola base de código** en Chrome, Brave, Chromium,
 - **Leer solo lo que selecciones**: clic derecho → «🔊 Leer selección», o el
   atajo de teclado **Alt+L**.
 - **Barrita flotante con todos los controles** mientras lees: pausa,
-  anterior/siguiente, velocidad y tono con botones **−/+** de 0.1 en 0.1,
+  anterior/siguiente, velocidad con botones **−/+** de 0.1 en 0.1,
   selector de voz y cerrar. En el popup, además, deslizadores con contadores.
 - **Voces neuronales gratis** 🌟 (motor Piper, open source): mucho más claras
   y humanas que las del sistema. Se descargan una sola vez (25–120 MB por
@@ -25,24 +25,27 @@ Funciona con **una sola base de código** en Chrome, Brave, Chromium,
   (México y Argentina) y de España— + 7 en inglés (EE. UU. y Reino Unido).
   Detalles de la investigación en [VOCES.md](VOCES.md).
 - **Velocidad de 0.5× a 5×**: con las voces neuronales el 5× es real y sin
-  voz de ardilla (se conserva el tono). El **tono** solo se ajusta con las
-  voces del sistema; con una voz neuronal el control aparece en gris (esas
-  voces no admiten cambio de tono, solo de velocidad).
+  voz de ardilla (se conserva el timbre).
 - **PDFs con su formato original**: el lector muestra el documento **como el
   visor del navegador** (páginas renderizadas con pdf.js de Mozilla, tablas y
   colores incluidos) y el resaltado de párrafo/oración/palabra se pinta
   **sobre el propio documento**. Clic en cualquier frase del PDF para saltar.
   Las páginas se renderizan según te acercas, para que los PDFs grandes no
   consuman memoria de golpe.
-- **Panel lateral para moverte por el PDF** ☰: con **🖼️ Páginas** ves una
+- **Panel lateral para moverte por el PDF** ☰: con **Páginas** ves una
   miniatura de cada hoja —la que estás viendo aparece resaltada en todo
-  momento— y con **🔖 Índice** los capítulos y apartados del documento (si el
+  momento— y con **Índice** los capítulos y apartados del documento (si el
   PDF los trae), plegables y con el apartado actual marcado. Pulsa cualquiera
   para saltar allí. El panel se abre y cierra con el botón ☰ y arriba siempre
   ves en qué página estás (p. ej. «3 / 12»).
-- **No lee la morralla de las páginas**: los **números de página**, las
-  **cabeceras** y los **pies** se detectan y se saltan, para que la voz no
-  interrumpa una frase con un «17» ni repita el título del libro en cada hoja.
+- **Tú decides qué se lee**: los **números de página**, las **cabeceras**, los
+  **pies** y los **pies de imagen** («Figura 3. …») se detectan por separado y
+  cada uno tiene su interruptor, en el popup y en el botón **Qué se lee** del
+  lector de PDF. Lo que no marques, la voz se lo salta: así no interrumpe una
+  frase con un «17» ni repite el título del libro en cada hoja. De fábrica se
+  callan números, cabeceras y pies, y **sí** se leen los pies de imagen.
+  El cambio se aplica **al vuelo**: el lector rehace el texto y sigue por la
+  misma frase, sin recargar ni volver a empezar.
 - **Navegación libre mientras lee** 🧭: en el PDF, por defecto la vista NO te
   persigue — puedes hojear el documento tranquilamente mientras la voz sigue
   leyendo. Si quieres que la vista acompañe a la lectura, pulsa el botón
@@ -130,18 +133,19 @@ gratis:
 | Leer solo un trozo             | Selecciono el texto → clic derecho → **🔊 Leer selección** (o **Alt+L**) |
 | Pausar / seguir                | Botón **⏯** de la barrita flotante o del popup             |
 | Saltar de frase                | Botones **⏮ / ⏭**, o clic directamente sobre la frase en el texto |
-| Cambiar voz / velocidad / tono | Selectores del popup (se guardan solos)                    |
+| Cambiar voz / velocidad        | Selectores del popup (se guardan solos)                    |
+| Que no lea números de página, cabeceras, pies o pies de imagen | Popup → **Qué se lee** · en el lector de PDF, botón **Qué se lee** |
 | Voz mucho más humana           | Popup → Voz → grupo **🌟 Neuronales** (espera la descarga la 1ª vez) |
 | Leer un PDF                    | Abro el PDF en una pestaña → icono 🔊 → **📄 Leer este PDF** |
 | Leer un PDF de mi disco        | Lector de PDF → **📂 Abrir PDF…**                          |
-| Moverme por un PDF largo       | Botón **☰** → **🖼️ Páginas** (miniaturas) o **🔖 Índice** (capítulos) |
+| Moverme por un PDF largo       | Botón **☰** → **Páginas** (miniaturas) o **Índice** (capítulos) |
 
 > **Truco:** si al usar una voz neuronal el navegador muestra «Pulsa ▶ para
 > escuchar», es la protección anti-autoplay del navegador: un clic y a leer.
 
 ### Sobre la velocidad 5×
 
-- Voces **🌟 neuronales**: velocidad real de 0.5× a 5× conservando el tono.
+- Voces **🌟 neuronales**: velocidad real de 0.5× a 5× conservando el timbre.
 - Voces **locales** de Windows: suelen respetar velocidades altas.
 - Voces **"online"** del sistema (las marcadas «· online»): el navegador las
   limita a ~2×, por mucho que se pida más. Es un límite de esas voces.
@@ -186,7 +190,7 @@ Voice-reader/
 ├── voces-extra.js       # registra voces Piper que no están en el mirror por defecto
 ├── content.js           # resaltado sobre el texto de la página + barrita flotante
 ├── tts-frame.html/.js   # iframe oculto que sintetiza las voces neuronales
-├── popup.html/.js       # controles (voz, velocidad, tono, transporte)
+├── popup.html/.js       # controles (voz, velocidad, qué se lee, transporte)
 ├── reader.html/.js      # lector de PDFs
 ├── VOCES.md             # investigación de voces (Piper vs Kokoro vs otras)
 ├── icons/               # iconos de la extensión

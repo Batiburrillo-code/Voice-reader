@@ -65,8 +65,6 @@ texto** (párrafo, oración y palabra) mientras avanza, como un karaoke de lectu
 En Opera GX `speechSynthesis.getVoices()` viene vacío. Por eso:
 - Para ese usuario, **las únicas voces disponibles son las neuronales (Piper)** de
   la extensión.
-- El control de **tono** (que solo aplica a voces del sistema) queda casi siempre
-  inútil para él → por eso se **desactiva en gris** con voces neuronales.
 - La extensión **no asume que existan voces del sistema**: siempre ofrece las
   neuronales.
 
@@ -86,7 +84,7 @@ Estructura (de arriba abajo), ancho fijo **340 px**, tema oscuro:
 1. **Título:** logo cuadrado 🔊 (26×26, degradado morado) + «Lector TTS».
 2. **Voz** — `<select>` con grupos: `✨ Automática`, `🌟 Neuronales`, `Sistema · Español`, `Sistema · Otros idiomas`.
 3. **Velocidad** — fila `[−] [slider 0.5–5] [+] [valor ×]` (pasos de 0.1).
-4. **Tono** — igual, rango 0.5–2. **Se pone en gris y deshabilitado** si la voz es neuronal. La etiqueta aclara «(voces del sistema)».
+4. **Qué se lee** — lista de casillas (una por parte del documento: números de página, cabeceras, pies, pies de imagen). Lo no marcado se salta al leer. Se pintan desde `LectorTTS.OPCIONES_LECTURA`, la misma fuente que usa el lector de PDF.
 5. **Acciones** (grid 2 col): **▶ Leer página** (botón primario morado) y **🔊 Leer selección**.
 6. **Transporte** (grid 4 col): **⏮ ⏯ ⏹ ⏭**.
 7. **👆 Leer al hacer clic** — botón interruptor (ancho completo; se pone morado al activarse).
@@ -105,8 +103,7 @@ la página). **Novedades v1.4:** es **arrastrable** y **se pliega**.
   **reabrir** cuando está contraída.
 - **Fila 1:** `⏮` anterior · `⏸/▶` pausa (botón principal morado) · `⏭` siguiente ·
   grupo **Velocidad** `[− valor +]` · **progreso** (p. ej. «69 / 191») · `✕` cerrar.
-- **Fila 2:** `<select>` de **voz** · grupo **Tono** (se pone en gris con voz
-  neuronal) · `👆` leer-al-clic · `🎯/🧭` auto-encuadre.
+- **Fila 2:** `<select>` de **voz** · `👆` leer-al-clic · `🎯/🧭` auto-encuadre.
 - **Mensaje** (línea ámbar) para avisos («Descargando voz…», «Pulsa ▶…», etc.).
 - **Plegado:** al **hacer clic fuera** de la barra, se **contrae** y deja **solo
   `⏮ ⏸ ⏭`** (más el asa). Ocupa lo mínimo. Se reabre tocando el asa.
@@ -121,15 +118,16 @@ el documento**.
 
 - **Cabecera** (barra superior fija): **☰** panel · título 📄 · **indicador de
   página** («3 / 12», pastilla) · `⏮ ⏸ ⏭` · `🧭/🎯` auto-encuadre · grupo
-  **Velocidad** · grupo **Tono** (gris con neuronal) · `<select>` voz ·
+  **Velocidad** · botón **Qué se lee** (abre un panelito de casillas anclado
+  debajo; se cierra con clic fuera o `Esc`) · `<select>` voz ·
   **📂 Abrir PDF…** · progreso.
 - **Panel lateral izquierdo** (214 px, fondo `#20202a`, borde derecho `#34344a`),
   con dos pestañas tipo *tablist* (la activa lleva el degradado morado→azul):
-  - **🖼️ Páginas** — miniatura de cada hoja (168 px de ancho, marco blanco con
+  - **Páginas** — miniatura de cada hoja (168 px de ancho, marco blanco con
     sombra y número debajo). La página actual lleva **borde morado + halo**
     (`box-shadow 0 0 0 3px rgba(124,92,255,.28)`) y su número en blanco; el
     panel la mantiene siempre a la vista.
-  - **🔖 Índice** — árbol de marcadores del PDF, plegable (chevron `▸/▾`), con
+  - **Índice** — árbol de marcadores del PDF, plegable (chevron `▸/▾`), con
     sangría de 12 px por nivel; el apartado en el que estás se resalta con
     fondo `rgba(124,92,255,.20)` y una barra morada a la izquierda. Si el PDF no
     trae marcadores, se muestra un texto explicativo (estado vacío).
@@ -229,18 +227,33 @@ Respaldo con la *selección* del navegador en Firefox < 140.
 
 **Moverse por un PDF (panel lateral):**
 - **☰** abre o cierra el panel. La cabecera muestra siempre la página actual.
-- **🖼️ Páginas:** clic en una miniatura → salta a esa página. La miniatura de la
+- **Páginas:** clic en una miniatura → salta a esa página. La miniatura de la
   página que estás viendo va resaltada y el panel la sigue automáticamente.
-- **🔖 Índice:** clic en un apartado → salta a él (respetando la altura exacta si
+- **Índice:** clic en un apartado → salta a él (respetando la altura exacta si
   el marcador la indica); el chevron pliega/despliega sus subapartados. El
   apartado en el que estás se resalta solo según avanzas por el documento.
 - Teclado: `←` `→` cambian de pestaña; miniaturas y apartados son botones
   enfocables.
 
-**Lo que NO se lee en voz alta (PDF):** números de página, cabeceras y pies. Se
-detectan por estar en los márgenes superior/inferior (8 %) **y además** parecer
-un número de página o repetirse en varias páginas (cabecera/pie corridos). Se
-saltan al leer, pero siguen viéndose en el documento.
+**Qué se lee y qué no (PDF).** Cuatro cosas se detectan por separado y cada una
+tiene su interruptor; lo que no se lee **sigue viéndose** en el documento:
+
+| Parte | Cómo se detecta | Por defecto |
+|---|---|---|
+| **Números de página** | Texto en los márgenes superior/inferior (8 %) que parece un número de página (`12`, `- 12 -`, `Página 4`, `iv`, `12 de 30`…) | se salta |
+| **Cabeceras** | En el margen superior **y** repetido en varias páginas (3 repeticiones con ≥4 páginas; 2 con 2–3). Al comparar se ignoran las cifras, así «Capítulo 3 — 15» y «— 16» cuentan igual | se salta |
+| **Pies de página** | Igual, en el margen inferior | se salta |
+| **Pies de imagen** | La línea **empieza** por «Figura/Fig./Tabla/Cuadro/Gráfico/Imagen/Foto/Ilustración/Esquema/Mapa/Lámina/Anexo…» + su número (arábigo o romano) y detrás no viene una letra. El pie sigue por las líneas pegadas con la misma letra, hasta que la frase cierra en punto, y como mucho 4 líneas | **se lee** |
+
+Cambiar cualquiera de los cuatro **rehace el texto al vuelo**
+(`reconstruirLectura`): no se vuelve a renderizar el PDF, y la lectura retoma en
+la misma frase (se busca por sus primeros 40 caracteres). Si estaba parada, sigue
+parada (`motor.cargar`, que carga sin arrancar).
+
+En **páginas web** los mismos ajustes se aplican a lo que hay: «Cabeceras» y
+«Pies» gobiernan `<header>` y `<footer>` en modo página completa, y «Pies de
+imagen» gobierna `<figcaption>`, `<caption>` y las clases habituales
+(`caption`, `epígrafe`, `wp-caption-text`…). Los números de página no existen ahí.
 
 **Durante la lectura:**
 - **Saltar por clic:** clic en una frase (web o PDF) = saltar a ella. Con el modo
@@ -248,8 +261,6 @@ saltan al leer, pero siguen viéndose en el documento.
 - **Transporte:** `⏮` anterior · `⏸/▶` pausa/reanudar · `⏭` siguiente · `⏹` detener.
 - **Velocidad:** 0.5×–5×, pasos de 0.1. Con voz **neuronal** el cambio es
   **instantáneo** (sin cortar el audio); con voz del sistema relanza la frase.
-- **Tono:** 0.5–2. **Solo voces del sistema.** Con neuronal, el control aparece
-  **en gris y deshabilitado** (regla `LectorTTS.soportaTono`).
 - **Auto-encuadre `🎯/🧭`:** si la vista sigue a la lectura o no. **Por defecto: en
   web SÍ sigue (`🎯`), en PDF NO (`🧭`, para poder hojear).** Se guarda.
 - **Pausa instantánea:** el `⏸` corta la voz en el acto. En voces del sistema, al
@@ -292,7 +303,7 @@ Alan, Jenny (media) — Reino Unido.
 
 ### 7.2 Voces del sistema (Web Speech API)
 Las que trae el navegador/SO. Se agrupan `Sistema · Español` y `Sistema · Otros
-idiomas`. **Admiten tono.** En **Opera GX no hay ninguna** (de ahí la insistencia en
+idiomas`. En **Opera GX no hay ninguna** (de ahí la insistencia en
 las neuronales). En Windows se pueden instalar más desde Configuración.
 
 ### 7.3 Opción automática
@@ -310,7 +321,10 @@ perfil). Claves y valores por defecto:
 |---|---|---|
 | `vozNombre` | `''` | `''`=automática · nombre de voz del sistema · `piper:<id>`=neuronal |
 | `velocidad` | `1.1` | 0.5–5 |
-| `tono` | `1.0` | 0.5–2 (solo aplica a voces del sistema) |
+| `leerNumerosPagina` | `false` | qué se lee: números de página (v1.5) |
+| `leerCabeceras` | `false` | qué se lee: cabeceras corridas · `<header>` en web (v1.5) |
+| `leerPies` | `false` | qué se lee: pies corridos · `<footer>` en web (v1.5) |
+| `leerPiesImagen` | `true` | qué se lee: «Figura 3. …» · `<figcaption>` en web (v1.5) |
 | `seguirWeb` | `true` | auto-encuadre en web |
 | `seguirPdf` | `false` | auto-encuadre en PDF (libre por defecto) |
 | `clicParaLeer` | `false` | interruptor «leer al hacer clic» (v1.4) |
@@ -331,7 +345,7 @@ manifest.json          # MV3 v1.4.0; doble background (service_worker + scripts)
                        # CSP con 'wasm-unsafe-eval'; WAR: tts-frame.html; gecko id + strict_min_version 115
 background.js          # menú contextual, atajo Alt+L, enrutado de mensajes (NUNCA reproduce voz aquí)
 speech-engine.js       # motor compartido, objeto global `LectorTTS`: troceo en oraciones, cola,
-                       # 2 backends (Web Speech / Piper), soportaTono, VOCES_NEURALES
+                       # 2 backends (Web Speech / Piper), OPCIONES_LECTURA, VOCES_NEURALES
 content.js             # páginas web: recolección de texto + mapa, resaltado (3 niveles), barrita
                        # flotante (Shadow DOM, arrastrable/plegable), leer-al-clic, iframe neuronal
 tts-frame.html/.js     # iframe OCULTO de la extensión: sintetiza Piper (WASM) y devuelve WAV por
@@ -399,7 +413,7 @@ Todo pensado para que la lectura arranque rápido y no se trabe:
 - **Caché de sesión ONNX (v1.4, «parche 5» de `vits-web.js`):** el modelo se carga
   **una vez** y se **reutiliza** en cada frase (antes se recreaba cada vez). Es
   seguro porque las síntesis van **en cola** (iframe y lector) → nunca dos a la vez.
-- **Velocidad neuronal real 0.5×–5×** con `playbackRate` conservando el tono
+- **Velocidad neuronal real 0.5×–5×** con `playbackRate` conservando el timbre
   (`preservesPitch`).
 - **Caché de frases con ventana** (±3 alrededor de la actual) y **prefetch de 2**:
   pasar de frase, retroceder, pausar/reanudar o reiniciar la lectura no obliga a
@@ -430,7 +444,12 @@ tras el primer uso.
   llevan y entonces esa pestaña solo muestra el texto de estado vacío.
 - **Filtro de cabeceras/pies:** es una detección por posición + repetición, no
   una certeza; en maquetaciones muy atípicas puede dejar escapar un pie o
-  callar una línea del borde. No hay interruptor para desactivarlo.
+  callar una línea del borde. Desde la v1.5 **sí** se puede desactivar por tipo.
+- **Pies de imagen:** se reconocen por cómo empiezan («Figura 3. …»). Un pie sin
+  esa marca —solo texto en cursiva bajo la foto— no se detecta. Y si el pie
+  ocupa más de 4 líneas, o no cierra en punto, se salta solo lo detectado.
+- **Qué se lee en web:** «Números de página» no aplica (no existen). «Cabeceras»
+  y «Pies» solo actúan en modo *página completa*, no al leer una selección.
 
 ---
 
@@ -445,6 +464,7 @@ tras el primer uso.
   intercambiables y ocultables). **No se leen** números de página, cabeceras ni
   pies. **Menos espera** al pasar de frase, retroceder, pausar o reiniciar
   (caché con ventana + prefetch de 2). Nueva prueba `tests/test-cabeceras.js`.
+- **v1.5.0** — **Qué se lee**: interruptor por tipo (números de página, cabeceras, pies y **pies de imagen**), en el popup y en el lector de PDF, aplicado **al vuelo** sin recargar. **Fuera el control de tono** (`tono`, `soportaTono`, `fijarTono` y su interfaz en las tres superficies). **Sin emojis** en las pestañas «Páginas» e «Índice» del panel. `tests/test-cabeceras.js` ampliada a pies de imagen y a cada interruptor.
 - **v1.4.0** — **Voces:** Argentina (`es_AR-daniela`) + varias inglesas, orden por región. **Tono en gris** con neuronales. **Leer al hacer clic** + `Alt`+clic. **Arranque rápido** (pre-calentado + caché de sesión). **Barra movible y plegable** (colapso a solo `⏮ ⏸ ⏭`, símbolo de arrastre único). PR #1 fusionada; etiqueta `v1.4.0`.
 
 ---

@@ -6,7 +6,8 @@ const path = require('path');
 const rutaMotor = path.join(__dirname, '..', 'speech-engine.js');
 eval(fs.readFileSync(rutaMotor, 'utf8')); // define globalThis.LectorTTS (sin window ni chrome)
 
-const { trocearEnOraciones, trocearRangos, esVozNeural, idPiper, soportaTono, VOCES_NEURALES } = globalThis.LectorTTS;
+const { trocearEnOraciones, trocearRangos, esVozNeural, idPiper, OPCIONES_LECTURA,
+  AJUSTES_DEFECTO, VOCES_NEURALES } = globalThis.LectorTTS;
 let fallos = 0;
 
 function caso(nombre, texto, comprobaciones) {
@@ -110,13 +111,23 @@ const okNeural = esVozNeural('piper:es_ES-davefx-medium') === true
 console.log((okNeural ? '✓' : '✗') + ' utilidades esVozNeural/idPiper');
 if (!okNeural) fallos++;
 
-// 11. soportaTono: las voces neuronales NO admiten tono; las del sistema sí
-const okTono = soportaTono('piper:es_MX-claude-high') === false
-  && soportaTono('piper:es_AR-daniela-high') === false
-  && soportaTono('Microsoft Helena') === true
-  && soportaTono('') === true;
-console.log((okTono ? '✓' : '✗') + ' soportaTono (neuronal=no, sistema=sí)');
-if (!okTono) fallos++;
+// 11. "Qué se lee": cada opción tiene su ajuste por defecto y su etiqueta
+const okOpciones = Array.isArray(OPCIONES_LECTURA)
+  && OPCIONES_LECTURA.length === 4
+  && OPCIONES_LECTURA.every((o) =>
+    typeof o.clave === 'string' && o.clave.startsWith('leer')
+    && typeof o.etiqueta === 'string' && o.etiqueta.length > 0
+    && typeof o.ayuda === 'string' && o.ayuda.length > 0
+    && typeof AJUSTES_DEFECTO[o.clave] === 'boolean')
+  // Por defecto se sigue callando la morralla, y sí se leen los pies de imagen.
+  && AJUSTES_DEFECTO.leerNumerosPagina === false
+  && AJUSTES_DEFECTO.leerCabeceras === false
+  && AJUSTES_DEFECTO.leerPies === false
+  && AJUSTES_DEFECTO.leerPiesImagen === true
+  // El tono se retiró en la v1.5: no debe quedar rastro en los ajustes.
+  && !('tono' in AJUSTES_DEFECTO);
+console.log((okOpciones ? '✓' : '✗') + ' OPCIONES_LECTURA y sus valores por defecto');
+if (!okOpciones) fallos++;
 
 // 12. Catálogo de voces neuronales: ids bien formados y voces latinas presentes
 const ids = VOCES_NEURALES.map(v => v.id);

@@ -54,11 +54,36 @@
     }
     .grupo button:hover { background: #3a3a4e; }
     .grupo .valor { font-size: 12.5px; font-weight: 650; color: #fff; min-width: 38px; text-align: center; }
-    /* Grupo desactivado (p. ej. el tono con una voz neuronal): en gris y sin uso */
-    .grupo.desactivado { opacity: .4; }
-    .grupo.desactivado button { cursor: not-allowed; }
-    .grupo.desactivado button:hover { background: transparent; }
     #progreso { font-size: 12px; color: #9a9aac; min-width: 60px; text-align: center; }
+
+    /* "Qué se lee": botón de la barra + panelito que se descuelga de él */
+    .con-panel { position: relative; }
+    #btn-que-se-lee[aria-expanded="true"] {
+      background: linear-gradient(135deg, #7c5cff, #5a8bff);
+      border-color: transparent; color: #fff;
+    }
+    #panel-que-se-lee {
+      position: absolute; top: calc(100% + 7px); right: 0; z-index: 30;
+      width: 290px; padding: 8px;
+      background: #23232e; border: 1px solid #3a3a4e; border-radius: 12px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, .5);
+      display: flex; flex-direction: column; gap: 2px;
+    }
+    #panel-que-se-lee .cabecera {
+      font-size: 10.5px; color: #6e6e80; padding: 3px 7px 5px;
+    }
+    .opcion-lectura {
+      display: grid; grid-template-columns: auto 1fr; gap: 3px 8px;
+      align-items: center; padding: 6px 7px; border-radius: 8px; cursor: pointer;
+    }
+    .opcion-lectura:hover { background: #2a2a38; }
+    .opcion-lectura input {
+      accent-color: #7c5cff; width: 15px; height: 15px; margin: 0; cursor: pointer;
+    }
+    .opcion-lectura .nombre { font-size: 12.5px; font-weight: 600; color: #e9e9ef; }
+    .opcion-lectura .ayuda {
+      grid-column: 2; font-size: 10.5px; color: #6e6e80; line-height: 1.35;
+    }
 
     /* Botón de solo icono (☰ del panel) */
     .icono { font-size: 15px; line-height: 1; padding: 8px 11px; }
@@ -227,13 +252,14 @@
       <button id="btn-vel-mas">+</button>
     </div>
 
-    <!-- Tono con contadores (solo afecta a las voces del sistema; se desactiva
-         en gris al elegir una voz neuronal, que no admite cambio de tono) -->
-    <div class="grupo" id="grupo-tono" title="Tono de la voz (voces del sistema)">
-      <span class="etiqueta">Tono</span>
-      <button id="btn-tono-menos">−</button>
-      <span class="valor" id="txt-tono">1.0</span>
-      <button id="btn-tono-mas">+</button>
+    <!-- Qué se lee: números de página, cabeceras, pies y pies de imagen.
+         Las casillas las pinta reader.js desde LectorTTS.OPCIONES_LECTURA. -->
+    <div class="con-panel">
+      <button id="btn-que-se-lee" aria-expanded="false" aria-controls="panel-que-se-lee"
+              title="Elegir qué partes del documento se leen en voz alta">Qué se lee</button>
+      <div id="panel-que-se-lee" role="group" aria-label="Qué se lee" hidden>
+        <div class="cabecera">Lo que no marques se salta al leer.</div>
+      </div>
     </div>
 
     <select id="sel-voz" title="Voz"></select>
@@ -246,9 +272,9 @@
     <aside id="panel" aria-label="Panel de navegación del documento">
       <div class="panel-tabs" role="tablist" aria-label="Vistas del panel">
         <button id="tab-miniaturas" role="tab" aria-selected="true" aria-controls="lista-miniaturas"
-                title="Miniaturas de todas las páginas">🖼️ Páginas</button>
+                title="Miniaturas de todas las páginas">Páginas</button>
         <button id="tab-indice" role="tab" aria-selected="false" aria-controls="lista-indice"
-                title="Índice del documento (títulos y apartados)">🔖 Índice</button>
+                title="Índice del documento (títulos y apartados)">Índice</button>
       </div>
       <div id="lista-miniaturas" class="panel-cuerpo" role="tabpanel" aria-labelledby="tab-miniaturas" tabindex="0"></div>
       <div id="lista-indice" class="panel-cuerpo oculto" role="tabpanel" aria-labelledby="tab-indice" tabindex="0"></div>

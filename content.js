@@ -104,7 +104,18 @@
   chrome.storage.onChanged.addListener((cambios, area) => {
     if (area !== 'sync') return;
     if ('velocidad' in cambios) motor.fijarVelocidad(cambios.velocidad.newValue);
-    if ('tono' in cambios) motor.fijarTono(cambios.tono.newValue);
+
+    // "Qué se lee": cambia lo que hay que leer, así que si hay una lectura en
+    // curso se vuelve a montar el texto (retomando en la misma frase).
+    let cambioLectura = false;
+    for (const op of LectorTTS.OPCIONES_LECTURA) {
+      if (op.clave in cambios) {
+        motor.ajustes[op.clave] = !!cambios[op.clave].newValue;
+        cambioLectura = true;
+      }
+    }
+    if (cambioLectura) rehacerLectura();
+
     if ('vozNombre' in cambios) {
       motor.fijarVoz(cambios.vozNombre.newValue);
       vozCalentada = null;   // voz nueva: hay que precalentarla de nuevo
@@ -133,7 +144,23 @@
     'SUP', 'SUB' // notas al pie tipo [1] de Wikipedia y similares
   ]);
   // En modo "página completa", además se salta la "carpintería" del sitio.
-  const IGNORAR_PAGINA = new Set(['NAV', 'HEADER', 'FOOTER', 'ASIDE', 'FORM', 'DIALOG']);
+  // NAV/ASIDE/FORM/DIALOG no se leen nunca; HEADER y FOOTER dependen de los
+  // ajustes "Cabeceras" y "Pies de página" (ver LectorTTS.OPCIONES_LECTURA).
+  const IGNORAR_PAGINA = new Set(['NAV', 'ASIDE', 'FORM', 'DIALOG']);
+
+  // Pies de imagen / figura / tabla. En web no hay una etiqueta única: además
+  // de <figcaption> y <caption>, muchos sitios los marcan solo con una clase.
+  const CLASE_PIE_IMAGEN =
+    /(^|[\s_-])(caption|epigrafe|ep[íi]grafe|pie-?(de-?)?(foto|imagen|figura)|image-caption|img-caption|wp-caption-text)([\s_-]|$)/i;
+
+  /** ¿Este elemento es el pie de una imagen, una figura o una tabla? */
+  function esPieDeImagen(el) {
+    if (!el) return false;
+    if (el.tagName === 'FIGCAPTION' || el.tagName === 'CAPTION') return true;
+    // className no es string en SVG y similares: solo miramos cuando lo es.
+    const clases = typeof el.className === 'string' ? el.className : '';
+    return CLASE_PIE_IMAGEN.test(clases) || CLASE_PIE_IMAGEN.test(el.id || '');
+  }
   // Etiquetas que marcan un límite de bloque (una oración no puede cruzarlo).
   const BLOQUES = new Set([
     'P', 'DIV', 'SECTION', 'ARTICLE', 'MAIN', 'BODY', 'LI', 'UL', 'OL',
@@ -174,6 +201,12 @@
     const esVisible = crearDetectorVisibilidad();
     const decisionCache = new Map(); // elemento → ¿aceptado?
 
+    // Qué se lee (ajustes del usuario). En web, "cabeceras" y "pies" son las
+    // zonas <header> y <footer>; los números de página no existen aquí.
+    const leerCabeceras = !!motor.ajustes.leerCabeceras;
+    const leerPies = !!motor.ajustes.leerPies;
+    const leerPiesImagen = !!motor.ajustes.leerPiesImagen;
+
     function aceptaElemento(el) {
       if (!el) return false;
       if (decisionCache.has(el)) return decisionCache.get(el);
@@ -181,6 +214,9 @@
       for (let e = el; e && ok; e = e.parentElement) {
         if (IGNORAR.has(e.tagName)) ok = false;
         else if (modoPagina && IGNORAR_PAGINA.has(e.tagName)) ok = false;
+        else if (modoPagina && !leerCabeceras && e.tagName === 'HEADER') ok = false;
+        else if (modoPagina && !leerPies && e.tagName === 'FOOTER') ok = false;
+        else if (!leerPiesImagen && esPieDeImagen(e)) ok = false;
         else if (e.id && String(e.id).startsWith('__lector-tts')) ok = false;
       }
       if (ok) ok = esVisible(el);
@@ -470,9 +506,6 @@
     }
     .grupo button:hover { background: #3a3a4e; }
     .grupo .valor { font-size: 12px; font-weight: 650; color: #fff; min-width: 34px; text-align: center; }
-    .grupo.desactivado { opacity: .4; }
-    .grupo.desactivado button { cursor: not-allowed; }
-    .grupo.desactivado button:hover { background: transparent; }
     .progreso { font-size: 11.5px; color: #9a9aac; min-width: 50px; text-align: center; margin-left: auto; }
     .mensaje { font-size: 11.5px; color: #ffd9a8; max-width: 320px; }
     .mensaje:empty { display: none; }
@@ -507,12 +540,6 @@
         </div>
         <div class="fila fila-2">
           <select class="sel-voz" title="Voz"></select>
-          <div class="grupo grupo-tono" title="Tono (voces del sistema)">
-            <span class="mini">Tono</span>
-            <button class="tono-menos">−</button>
-            <span class="valor val-tono">1.0</span>
-            <button class="tono-mas">+</button>
-          </div>
           <button class="btn btn-clic" title="Leer al hacer clic">👆</button>
           <button class="btn btn-seguir" title="Auto-encuadre de la lectura">🎯</button>
         </div>
@@ -532,17 +559,14 @@
       else motor.pausar();
     });
 
-    // Contadores de −/+ 0.1 para velocidad y tono. El cambio se guarda en
+    // Contadores de −/+ 0.1 para la velocidad. El cambio se guarda en
     // chrome.storage y el "eco" lo aplica al motor (mismo camino que el popup).
     shadow.querySelector('.vel-menos').addEventListener('click', () => pasoBarra('velocidad', -0.1, 0.5, 5));
     shadow.querySelector('.vel-mas').addEventListener('click', () => pasoBarra('velocidad', 0.1, 0.5, 5));
-    shadow.querySelector('.tono-menos').addEventListener('click', () => pasoBarra('tono', -0.1, 0.5, 2));
-    shadow.querySelector('.tono-mas').addEventListener('click', () => pasoBarra('tono', 0.1, 0.5, 2));
 
     const selVoz = shadow.querySelector('.sel-voz');
     selVoz.addEventListener('change', () => {
-      // El eco de storage.onChanged aplica la voz al motor y llama a
-      // sincronizarBarra(), que ya refleja el estado del control de tono.
+      // El eco de storage.onChanged aplica la voz al motor.
       LectorTTS.guardarAjustes({ vozNombre: selVoz.value });
     });
 
@@ -574,11 +598,7 @@
       btnClic: shadow.querySelector('.btn-clic'),
       progreso: shadow.querySelector('.progreso'),
       mensaje: shadow.querySelector('.mensaje'),
-      valVel: shadow.querySelector('.val-vel'),
-      valTono: shadow.querySelector('.val-tono'),
-      grupoTono: shadow.querySelector('.grupo-tono'),
-      btnTonoMenos: shadow.querySelector('.tono-menos'),
-      btnTonoMas: shadow.querySelector('.tono-mas')
+      valVel: shadow.querySelector('.val-vel')
     };
     hacerArrastrable(host, barra.asa);
     aplicarPosicionBarra(host);
@@ -739,27 +759,8 @@
   function sincronizarBarra() {
     if (!barra) return;
     barra.valVel.textContent = (Number(motor.ajustes.velocidad) || 1.1).toFixed(1) + '×';
-    barra.valTono.textContent = (Number(motor.ajustes.tono) || 1).toFixed(1);
     barra.selVoz.value = motor.ajustes.vozNombre || '';
     if (barra.selVoz.value !== (motor.ajustes.vozNombre || '')) barra.selVoz.value = '';
-    reflejarTonoBarra();
-  }
-
-  /**
-   * Activa o desactiva (en gris) el control de tono de la barrita: las voces
-   * neuronales Piper no admiten cambio de tono, solo de velocidad.
-   */
-  function reflejarTonoBarra() {
-    if (!barra) return;
-    const permite = LectorTTS.soportaTono(motor.ajustes.vozNombre);
-    barra.btnTonoMenos.disabled = !permite;
-    barra.btnTonoMas.disabled = !permite;
-    if (barra.grupoTono) {
-      barra.grupoTono.classList.toggle('desactivado', !permite);
-      barra.grupoTono.title = permite
-        ? 'Tono (voces del sistema)'
-        : 'Las voces neuronales no permiten cambiar el tono (solo la velocidad)';
-    }
   }
 
   /** Rellena el selector de voz de la barrita (neuronales + sistema). */
@@ -916,7 +917,14 @@
    * `posicionInicio` (opcional) es una posición dentro de rec.texto: la lectura
    * empieza en la oración que la contiene (se usa al leer al hacer clic).
    */
-  function iniciarLectura(rec, posicionInicio) {
+  /**
+   * Arranca (o recarga) la lectura de un texto ya recolectado.
+   *   `rehacer`     → función que vuelve a recolectar lo mismo, para poder
+   *                   reconstruir la lectura si cambian los ajustes de "qué se
+   *                   lee". Las selecciones sueltas no la traen: ya no existen.
+   *   `sinArrancar` → deja el texto cargado y el cursor puesto, pero callado.
+   */
+  function iniciarLectura(rec, posicionInicio, opciones) {
     const rangos = LectorTTS.trocearRangos(rec.texto, rec.cortes)
       .filter((r) => rec.texto.slice(r.ini, r.fin).trim());
     if (!rangos.length) return false;
@@ -925,20 +933,55 @@
       const j = rangos.findIndex((o) => posicionInicio >= o.ini && posicionInicio < o.fin);
       if (j >= 0) desde = j;
     }
+    const op = opciones || {};
     limpiarResaltado();
-    lectura = { texto: rec.texto, mapa: rec.mapa, oraciones: rangos, cortes: rec.cortes };
+    lectura = {
+      texto: rec.texto,
+      mapa: rec.mapa,
+      oraciones: rangos,
+      cortes: rec.cortes,
+      rehacer: op.rehacer || null
+    };
     prepararResaltado();
     crearBarra();
     mensajeBarra('');
-    motor.iniciar(rangos.map((r) => rec.texto.slice(r.ini, r.fin)), desde);
+    const textos = rangos.map((r) => rec.texto.slice(r.ini, r.fin));
+    if (op.sinArrancar) motor.cargar(textos, desde);
+    else motor.iniciar(textos, desde);
     return true;
   }
 
   /** Lee el contenido principal de la página, resaltando en el sitio. */
   function leerPagina() {
-    const raiz = elegirRaiz();
-    const rec = recolectar(raiz, null, true);
-    return iniciarLectura(rec);
+    const rehacer = () => recolectar(elegirRaiz(), null, true);
+    return iniciarLectura(rehacer(), undefined, { rehacer });
+  }
+
+  /**
+   * Vuelve a montar la lectura en curso porque han cambiado los ajustes de
+   * "qué se lee". Retoma en la misma frase: la busca por su texto, porque el
+   * cuerpo no cambia — solo aparecen o desaparecen cabeceras, pies y pies de
+   * imagen. Si la lectura venía de una selección suelta no hay qué rehacer:
+   * los ajustes nuevos se aplicarán la próxima vez.
+   */
+  function rehacerLectura() {
+    if (!lectura || !lectura.rehacer) return;
+    const pista = String(motor.oraciones[motor.indice] || '').trim().slice(0, 40);
+    const indicePrevio = motor.indice;
+    const sonando = motor.leyendo && !motor.enPausa;
+    const rec = lectura.rehacer();
+    if (!rec || !rec.texto.trim()) return;
+    // Se carga en silencio y solo después se retoma, para no dar un tirón de
+    // audio mientras se recoloca el cursor.
+    const rehacer = lectura.rehacer;
+    if (!iniciarLectura(rec, undefined, { rehacer, sinArrancar: true })) return;
+    let idx = Math.min(indicePrevio, motor.oraciones.length - 1);
+    if (pista) {
+      const j = motor.oraciones.findIndex((t) => t.trim().startsWith(pista));
+      if (j >= 0) idx = j;
+    }
+    if (sonando) motor.iniciar(motor.oraciones, idx);
+    else motor.cargar(motor.oraciones, idx);
   }
 
   /** Lee la selección actual; si no hay, lee la página entera. */
@@ -1039,13 +1082,15 @@
     // recolectamos todo el cuerpo (así se lee incluso en páginas "difíciles").
     let raiz = elegirRaiz();
     if (!raiz.contains(nodo)) raiz = document.body;
-    let rec = recolectar(raiz, null, true);
+    let rehacer = () => recolectar(raiz, null, true);
+    let rec = rehacer();
     let posicion = posicionEnMapa(rec.mapa, nodo, offset);
     if (posicion === null) {
-      rec = recolectar(document.body, null, false);
+      rehacer = () => recolectar(document.body, null, false);
+      rec = rehacer();
       posicion = posicionEnMapa(rec.mapa, nodo, offset);
     }
-    return iniciarLectura(rec, posicion === null ? undefined : posicion);
+    return iniciarLectura(rec, posicion === null ? undefined : posicion, { rehacer });
   }
 
   // Precedencia de un clic sobre texto:

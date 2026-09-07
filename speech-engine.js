@@ -23,7 +23,44 @@
   // ------------------------------------------------------------------
   // Ajustes por defecto (español primero: velocidad 1.1 y voz automática)
   // ------------------------------------------------------------------
-  const AJUSTES_DEFECTO = { vozNombre: '', velocidad: 1.1, tono: 1.0 };
+  // Ajustes que se guardan en chrome.storage.sync. Los `leer*` deciden QUÉ
+  // partes del documento se leen en voz alta (ver OPCIONES_LECTURA).
+  const AJUSTES_DEFECTO = {
+    vozNombre: '',
+    velocidad: 1.1,
+    leerNumerosPagina: false,
+    leerCabeceras: false,
+    leerPies: false,
+    leerPiesImagen: true
+  };
+
+  /**
+   * Qué se lee y qué se salta. Se define aquí una sola vez para que el popup y
+   * el lector de PDF pinten exactamente los mismos interruptores.
+   * `true` = se lee en voz alta. `false` = se salta.
+   */
+  const OPCIONES_LECTURA = [
+    {
+      clave: 'leerNumerosPagina',
+      etiqueta: 'Números de página',
+      ayuda: 'El «17» suelto de cada hoja. Solo en PDF.'
+    },
+    {
+      clave: 'leerCabeceras',
+      etiqueta: 'Cabeceras',
+      ayuda: 'La línea que se repite arriba (título del libro, capítulo…). En web, la zona <header>.'
+    },
+    {
+      clave: 'leerPies',
+      etiqueta: 'Pies de página',
+      ayuda: 'La línea que se repite abajo. En web, la zona <footer>.'
+    },
+    {
+      clave: 'leerPiesImagen',
+      etiqueta: 'Pies de imagen',
+      ayuda: '«Figura 3. …», «Tabla 2. …» y los pies de foto o de tabla.'
+    }
+  ];
 
   // Límites del troceo (ver trocearRangos).
   const MIN_ORACION = 60;
@@ -78,16 +115,6 @@
   /** ¿Es un nombre de voz neuronal ("piper:...")? */
   function esVozNeural(nombre) {
     return typeof nombre === 'string' && nombre.startsWith('piper:');
-  }
-
-  /**
-   * ¿Esta voz permite ajustar el TONO?
-   * Solo las voces del sistema: las neuronales Piper ignoran el tono (únicamente
-   * cambian de velocidad), por eso la interfaz desactiva el control de tono
-   * cuando hay una voz neuronal elegida.
-   */
-  function soportaTono(nombre) {
-    return !esVozNeural(nombre);
   }
 
   /** Saca el id Piper de un nombre "piper:es_ES-davefx-medium". */
@@ -399,7 +426,6 @@
       }
       const velocidad = Number(motor.ajustes.velocidad) || AJUSTES_DEFECTO.velocidad;
       u.rate = Math.min(10, Math.max(0.1, velocidad));
-      u.pitch = Math.min(2, Math.max(0, Number(motor.ajustes.tono) || AJUSTES_DEFECTO.tono));
 
       // Resaltado palabra a palabra. Si la voz emite eventos "boundary" los
       // usamos (exactos); si no, a los 600 ms arranca una ESTIMACIÓN por
@@ -646,10 +672,18 @@
       }
     };
 
-    /** Cambia el tono (solo afecta a las voces del sistema). */
-    motor.fijarTono = function (t) {
-      motor.ajustes.tono = t;
-      if (!motor._audio && motor.leyendo && !motor.enPausa) hablar(motor.indice);
+    /**
+     * Cambia el texto SIN ponerse a sonar, dejando el cursor en `desde`.
+     * Lo usa el lector de PDF cuando el documento se reconstruye porque han
+     * cambiado los ajustes de "qué se lee": si la lectura estaba parada, no
+     * queremos que arranque sola.
+     */
+    motor.cargar = function (oraciones, desde) {
+      const nuevas = oraciones || [];
+      if (!mismasOraciones(motor.oraciones, nuevas)) motor._cacheAudio.clear();
+      motor.oraciones = nuevas;
+      motor.indice = Math.min(Math.max(0, desde || 0), Math.max(0, nuevas.length - 1));
+      notificar();
     };
 
     /** Cambia la voz al vuelo. */
@@ -668,9 +702,9 @@
   // ------------------------------------------------------------------
   global.LectorTTS = {
     AJUSTES_DEFECTO: AJUSTES_DEFECTO,
+    OPCIONES_LECTURA: OPCIONES_LECTURA,
     VOCES_NEURALES: VOCES_NEURALES,
     esVozNeural: esVozNeural,
-    soportaTono: soportaTono,
     idPiper: idPiper,
     trocearRangos: trocearRangos,
     trocearEnOraciones: trocearEnOraciones,

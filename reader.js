@@ -42,10 +42,9 @@ const btnAbrir = document.getElementById('btn-abrir');
 const inputArchivo = document.getElementById('input-archivo');
 const selVoz = document.getElementById('sel-voz');
 const txtVel = document.getElementById('txt-vel');
-const txtTono = document.getElementById('txt-tono');
-const grupoTono = document.getElementById('grupo-tono');
-const btnTonoMenos = document.getElementById('btn-tono-menos');
-const btnTonoMas = document.getElementById('btn-tono-mas');
+// "Qué se lee": botón de la barra y su panelito de casillas.
+const btnQueSeLee = document.getElementById('btn-que-se-lee');
+const panelQueSeLee = document.getElementById('panel-que-se-lee');
 // Panel lateral: miniaturas de páginas e índice del documento.
 const elPanel = document.getElementById('panel');
 const btnPanel = document.getElementById('btn-panel');
@@ -75,6 +74,10 @@ motor.sintetizarNeural = (texto, idVoz, alProgreso) => {
 // { texto, mapa, oraciones, cortes, textos, porNodo }
 let vista = null;
 let parrafoActual = null; // límites del párrafo ya resaltado (para no repintar)
+// El documento ya procesado ({paginas, hayTextLayer, numPaginas}), para poder
+// rehacer `vista` cuando cambien los ajustes de "qué se lee" sin renderizarlo
+// todo otra vez.
+let documentoAbierto = null;
 
 // ---- Resaltado sobre el documento (Custom Highlight API) -------------------
 
@@ -279,23 +282,67 @@ function ocultarEstado() {
 // ---- Preferencias (compartidas con el popup vía chrome.storage.sync) -------
 
 function pintarVel(v) { txtVel.textContent = Number(v).toFixed(1) + '×'; }
-function pintarTono(v) { txtTono.textContent = Number(v).toFixed(1); }
 
-/**
- * Activa o desactiva (en gris) el control de tono según la voz elegida: las
- * voces neuronales Piper no admiten cambio de tono, solo de velocidad.
- */
-function reflejarTono() {
-  const permite = LectorTTS.soportaTono(motor.ajustes.vozNombre);
-  btnTonoMenos.disabled = !permite;
-  btnTonoMas.disabled = !permite;
-  if (grupoTono) {
-    grupoTono.classList.toggle('desactivado', !permite);
-    grupoTono.title = permite
-      ? 'Tono de la voz (voces del sistema)'
-      : 'Las voces neuronales no permiten cambiar el tono (solo la velocidad)';
+// ---- "Qué se lee" -----------------------------------------------------------
+//
+// Un interruptor por parte del documento (números de página, cabeceras, pies y
+// pies de imagen). Las opciones se definen una sola vez en speech-engine.js,
+// así que el popup y este panel ofrecen exactamente lo mismo, y se guardan en
+// chrome.storage.sync: cambiarlo aquí lo cambia también allí.
+
+const casillasLectura = new Map();   // clave del ajuste → <input type=checkbox>
+
+function pintarPanelQueSeLee() {
+  for (const op of LectorTTS.OPCIONES_LECTURA) {
+    const fila = document.createElement('label');
+    fila.className = 'opcion-lectura';
+    fila.title = op.ayuda;
+
+    const casilla = document.createElement('input');
+    casilla.type = 'checkbox';
+    casilla.checked = !!motor.ajustes[op.clave];
+    casilla.addEventListener('change', () => {
+      // Se guarda y el eco de storage.onChanged rehace la lectura (camino único).
+      LectorTTS.guardarAjustes({ [op.clave]: casilla.checked });
+    });
+
+    const nombre = document.createElement('span');
+    nombre.className = 'nombre';
+    nombre.textContent = op.etiqueta;
+
+    const ayuda = document.createElement('span');
+    ayuda.className = 'ayuda';
+    ayuda.textContent = op.ayuda;
+
+    fila.append(casilla, nombre, ayuda);
+    panelQueSeLee.appendChild(fila);
+    casillasLectura.set(op.clave, casilla);
   }
 }
+
+/** Refleja los ajustes actuales en las casillas del panel. */
+function sincronizarCasillasLectura() {
+  for (const [clave, casilla] of casillasLectura) casilla.checked = !!motor.ajustes[clave];
+}
+
+function abrirPanelQueSeLee(abrir) {
+  panelQueSeLee.hidden = !abrir;
+  btnQueSeLee.setAttribute('aria-expanded', abrir ? 'true' : 'false');
+}
+
+btnQueSeLee.addEventListener('click', (ev) => {
+  ev.stopPropagation();
+  abrirPanelQueSeLee(panelQueSeLee.hidden);
+});
+// Un clic fuera (o Escape) cierra el panelito.
+document.addEventListener('click', (ev) => {
+  if (panelQueSeLee.hidden) return;
+  if (panelQueSeLee.contains(ev.target) || btnQueSeLee.contains(ev.target)) return;
+  abrirPanelQueSeLee(false);
+});
+document.addEventListener('keydown', (ev) => {
+  if (ev.key === 'Escape' && !panelQueSeLee.hidden) abrirPanelQueSeLee(false);
+});
 
 // Pre-calentado del motor neuronal: la primera lectura con una voz Piper
 // arranca "en frío" (carga del WASM + lectura del modelo). Sintetizamos un
@@ -312,8 +359,7 @@ function calentarNeural() {
 LectorTTS.cargarAjustes((ajustes) => {
   motor.ajustes = ajustes;
   pintarVel(ajustes.velocidad);
-  pintarTono(ajustes.tono);
-  reflejarTono();
+  pintarPanelQueSeLee();
   poblarVoces();
   calentarNeural();
 });
@@ -331,14 +377,24 @@ chrome.storage.onChanged.addListener((cambios, area) => {
     motor.fijarVelocidad(cambios.velocidad.newValue);
     pintarVel(cambios.velocidad.newValue);
   }
-  if ('tono' in cambios) {
-    motor.fijarTono(cambios.tono.newValue);
-    pintarTono(cambios.tono.newValue);
+  // "Qué se lee": cambia lo que hay que leer, así que hay que rehacer el texto
+  // del documento (retomando en la misma frase). Puede venir de este panel o
+  // del popup de la extensión: el camino es el mismo.
+  let cambioLectura = false;
+  for (const op of LectorTTS.OPCIONES_LECTURA) {
+    if (op.clave in cambios) {
+      motor.ajustes[op.clave] = !!cambios[op.clave].newValue;
+      cambioLectura = true;
+    }
   }
+  if (cambioLectura) {
+    sincronizarCasillasLectura();
+    reconstruirLectura();
+  }
+
   if ('vozNombre' in cambios) {
     motor.fijarVoz(cambios.vozNombre.newValue);
     selVoz.value = cambios.vozNombre.newValue || '';
-    reflejarTono();
     vozCalentada = null;   // voz nueva: precalentarla otra vez
     calentarNeural();
   }
@@ -348,7 +404,7 @@ chrome.storage.onChanged.addListener((cambios, area) => {
   }
 });
 
-// Contadores de −/+ 0.1 (velocidad y tono).
+// Contadores de −/+ 0.1 (velocidad).
 const timersPaso = {};
 function paso(clave, delta, min, max, pintar) {
   const actual = Number(motor.ajustes[clave]) || 1;
@@ -367,8 +423,6 @@ function paso(clave, delta, min, max, pintar) {
 }
 document.getElementById('btn-vel-menos').addEventListener('click', () => paso('velocidad', -0.1, 0.5, 5, pintarVel));
 document.getElementById('btn-vel-mas').addEventListener('click', () => paso('velocidad', 0.1, 0.5, 5, pintarVel));
-document.getElementById('btn-tono-menos').addEventListener('click', () => paso('tono', -0.1, 0.5, 2, pintarTono));
-document.getElementById('btn-tono-mas').addEventListener('click', () => paso('tono', 0.1, 0.5, 2, pintarTono));
 
 // ---- Selector de voz (neuronales y español primero) --------------------------
 
@@ -489,8 +543,8 @@ async function pintarCanvas(divPag) {
 // ---- Panel lateral: miniaturas de páginas e índice del documento -------------
 //
 // Dos vistas intercambiables, como en cualquier lector de PDF:
-//   🖼️ Páginas → una miniatura por hoja, con la que estás viendo resaltada.
-//   🔖 Índice  → los marcadores del PDF (capítulos y apartados), si los trae.
+//   Páginas → una miniatura por hoja, con la que estás viendo resaltada.
+//   Índice  → los marcadores del PDF (capítulos y apartados), si los trae.
 // Las dos navegan al pulsar, y el panel se puede ocultar (queda guardado).
 
 const ANCHO_MINI = 168;      // ancho en píxeles de cada miniatura
@@ -772,7 +826,7 @@ async function construirIndice(doc) {
     const aviso = document.createElement('p');
     aviso.className = 'panel-vacio';
     aviso.textContent = 'Este PDF no trae índice: su autor no incluyó marcadores de ' +
-      'capítulos ni apartados. Usa la vista 🖼️ Páginas para moverte por el documento.';
+      'capítulos ni apartados. Usa la vista Páginas para moverte por el documento.';
     elListaIndice.appendChild(aviso);
     return;
   }
@@ -907,17 +961,95 @@ function reiniciarPanel() {
   elPagActual.textContent = '—';
 }
 
-// ---- Cabeceras, pies y números de página (no se leen en voz alta) -----------
+// ---- Qué se lee y qué se salta ---------------------------------------------
 //
-// En un PDF, la cabecera, el pie y el número de página son trozos de texto como
-// cualquier otro: si no se filtran, la voz suelta un "17" en mitad de una frase
-// o repite el título del libro en cada hoja. Se detectan por DOS señales, para
-// no comerse nunca contenido de verdad:
+// En un PDF, la cabecera, el pie, el número de página y el pie de una figura
+// son trozos de texto como cualquier otro: si no se filtran, la voz suelta un
+// "17" en mitad de una frase o repite el título del libro en cada hoja.
+//
+// Cabeceras, pies y números se detectan por DOS señales, para no comerse nunca
+// contenido de verdad:
 //   1. Están en el margen de arriba o de abajo de la página (8%), y además
 //   2. o bien parecen un número de página, o bien se REPITEN en varias páginas
 //      (que es justo lo que hace una cabecera o un pie corrido).
+// Los pies de imagen se detectan aparte, por cómo empiezan ("Figura 3. …").
+//
+// Cada tipo se salta o se lee según los ajustes del usuario (OPCIONES_LECTURA).
 
 const MARGEN_BORDE = 0.08;   // 8% superior e inferior de cada página
+
+// Cómo empieza el pie de una figura, tabla, foto o esquema: la palabra que lo
+// nombra y SU NÚMERO (arábigo o romano). Va anclado al principio de la línea,
+// así que "…como se ve en la Figura 1" (texto normal) no cuenta; y detrás del
+// número no puede venir una letra, para que "Cuadro clínico" o "Figuras
+// retóricas" no se confundan con un pie.
+const MARCA_PIE_IMAGEN = new RegExp(
+  '^\\s*(?:fig(?:ura|\\.)?|figure|tab(?:la|le|\\.)?|cuadro|gr[áa]fic[oa]|graph|chart|' +
+  'imagen|image|foto(?:graf[íi]a)?|photo|ilustraci[óo]n|illustration|esquema|' +
+  'diagrama|diagram|mapa|l[áa]mina|plate|anexo|exhibit)' +
+  '\\s*\\.?\\s*' +
+  '(?:\\d{1,3}(?:[.-]\\d{1,3})*' +                                    // 3, 2.1, 4-2
+  '|(?=[ivxlcdm])m{0,3}(?:cm|cd|d?c{0,3})(?:xc|xl|l?x{0,3})(?:ix|iv|v?i{0,3}))' +
+  '(?![\\p{L}\\d])',
+  'iu'
+);
+
+/** ¿Esta línea arranca un pie de imagen, figura o tabla? */
+function esPieDeImagen(txt) {
+  const t = String(txt).replace(/\s+/g, ' ').trim();
+  if (!t) return false;
+  return MARCA_PIE_IMAGEN.test(t);
+}
+
+/**
+ * Agrupa los trozos de una página en LÍNEAS, por su altura en la hoja. Los
+ * pies de imagen hay que mirarlos línea a línea: pdf.js parte el texto en
+ * trozos sueltos y "Figura" y "3." pueden venir separados.
+ */
+function agruparEnLineas(items) {
+  const lineas = [];
+  let actual = null;
+  for (const item of items) {
+    const y = item.transform && item.transform[5];
+    if (typeof y !== 'number' || !item.str) continue;
+    const alto = Math.max(item.height || 0, 6);
+    if (actual && Math.abs(actual.y - y) <= alto * 0.6) {
+      actual.items.push(item);
+      actual.texto += item.str;
+    } else {
+      actual = { y, alto, items: [item], texto: String(item.str) };
+      lineas.push(actual);
+    }
+  }
+  return lineas;
+}
+
+/**
+ * Marca los pies de imagen de UNA página. El pie empieza en la línea que trae
+ * la marca ("Figura 3.") y sigue mientras las líneas vayan pegadas y con la
+ * misma letra: un pie suele ocupar dos o tres renglones. Se corta en cuanto la
+ * frase cierra con punto, para no tragarse el párrafo que viene detrás.
+ */
+function marcarPiesDeImagen(pg) {
+  const lineas = agruparEnLineas(pg.items);
+  for (let i = 0; i < lineas.length; i++) {
+    if (!esPieDeImagen(lineas[i].texto)) continue;
+    const alto = lineas[i].alto;
+    let j = i;
+    while (j < lineas.length) {
+      for (const it of lineas[j].items) pg.omitir.add(it);
+      if (/[.!?]["»)\]]?\s*$/.test(lineas[j].texto)) break;  // el pie ya cerró
+      if (j - i >= 3) break;                                 // como mucho 4 líneas
+      const sig = lineas[j + 1];
+      if (!sig) break;
+      const salto = Math.abs(lineas[j].y - sig.y);
+      const mismaLetra = Math.abs((sig.alto || 0) - alto) <= 1;
+      if (salto > alto * 1.9 || !mismaLetra) break;
+      j++;
+    }
+    i = j;
+  }
+}
 
 /** ¿Este texto suelto parece un número de página? */
 function esNumeroDePagina(txt) {
@@ -936,10 +1068,15 @@ function esNumeroDePagina(txt) {
 }
 
 /**
- * Marca en cada página (`pg.omitir`) los trozos que NO se deben leer.
- * `paginas` = [{items, alto}], donde `alto` es la altura de la página.
+ * Marca en cada página (`pg.omitir`) los trozos que NO se deben leer, según lo
+ * que el usuario haya elegido en "Qué se lee".
+ *
+ * `paginas`  = [{items, alto}], donde `alto` es la altura de la página.
+ * `opciones` = {leerNumerosPagina, leerCabeceras, leerPies, leerPiesImagen};
+ *              lo que falte se toma como `false` (se salta).
  */
-function marcarCabecerasYPies(paginas) {
+function marcarQueNoSeLee(paginas, opciones) {
+  const op = opciones || {};
   const conteo = new Map();   // "zona|texto sin cifras" → en cuántas páginas sale
   const candidatos = [];
 
@@ -957,7 +1094,7 @@ function marcarCabecerasYPies(paginas) {
       // Al comparar entre páginas ignoramos las cifras: así "Capítulo 3 — 15"
       // y "Capítulo 3 — 16" cuentan como la misma cabecera.
       const clave = zona + '|' + txt.replace(/\s+/g, ' ').replace(/\d+/g, '#').toLowerCase();
-      candidatos.push({ pg, item, clave, txt });
+      candidatos.push({ pg, item, clave, txt, zona });
       if (!vistosAqui.has(clave)) {
         vistosAqui.add(clave);
         conteo.set(clave, (conteo.get(clave) || 0) + 1);
@@ -966,11 +1103,21 @@ function marcarCabecerasYPies(paginas) {
   }
 
   // Con 4 páginas o más pedimos 3 repeticiones; con 2 o 3, dos. Con una sola
-  // página no hay repetición que valga: solo se quita si es un número.
+  // página no hay repetición que valga: solo cuenta si es un número.
   const repesNecesarias = paginas.length >= 4 ? 3 : 2;
   for (const c of candidatos) {
     const repetido = paginas.length >= 2 && (conteo.get(c.clave) || 0) >= repesNecesarias;
-    if (repetido || esNumeroDePagina(c.txt)) c.pg.omitir.add(c.item);
+    // Un "17" suelto es un número de página esté donde esté: manda sobre la
+    // clasificación por zona.
+    let salta;
+    if (esNumeroDePagina(c.txt)) salta = !op.leerNumerosPagina;
+    else if (!repetido) salta = false;                       // texto de verdad
+    else salta = c.zona === 'cabecera' ? !op.leerCabeceras : !op.leerPies;
+    if (salta) c.pg.omitir.add(c.item);
+  }
+
+  if (!op.leerPiesImagen) {
+    for (const pg of paginas) marcarPiesDeImagen(pg);
   }
 }
 
@@ -1018,6 +1165,7 @@ async function procesarPdf(datos, nombre) {
   motor.detener();
   limpiarResaltado();
   vista = null;
+  documentoAbierto = null;
   infoPaginas.clear();
   reiniciarPanel();
   elVisor.innerHTML = '';
@@ -1110,8 +1258,26 @@ async function procesarPdf(datos, nombre) {
   actualizarPaginaActual();
   construirIndice(documento);
 
-  // Fuera cabeceras, pies y números de página: no se leen en voz alta.
-  marcarCabecerasYPies(paginas);
+  // El documento queda guardado: si cambian los ajustes de "qué se lee" hay
+  // que rehacer el texto sin volver a renderizar nada.
+  documentoAbierto = { paginas, hayTextLayer, numPaginas: documento.numPages };
+
+  if (!montarVista()) return;
+  motor.iniciar(vista.textos, 0);
+}
+
+/**
+ * Rehace `vista` (texto, mapa de posiciones y cortes) a partir del documento ya
+ * cargado, aplicando los ajustes de "qué se lee". Devuelve `false` y deja un
+ * aviso en pantalla si el PDF no da texto que leer.
+ */
+function montarVista() {
+  if (!documentoAbierto) return false;
+  const { paginas, hayTextLayer, numPaginas } = documentoAbierto;
+
+  // Fuera lo que el usuario no quiera oír (cabeceras, pies, números, pies de
+  // imagen). Se recalcula entero: los ajustes pueden haber cambiado.
+  marcarQueNoSeLee(paginas, motor.ajustes);
 
   // Texto global + mapa de posiciones + cortes (páginas y párrafos).
   const resaltable = hayTextLayer && paginas.every((pg) => pg.coincide);
@@ -1129,7 +1295,7 @@ async function procesarPdf(datos, nombre) {
       // OJO: el contador de nodos avanza SIEMPRE, también con los trozos que no
       // se leen; si no, la capa de texto y el resaltado se desalinearían.
       const indiceNodo = iNodo++;
-      if (pg.omitir.has(item)) continue;   // cabecera, pie o número de página
+      if (pg.omitir.has(item)) continue;   // algo que el usuario no quiere oír
       // Un salto vertical grande entre líneas = párrafo nuevo.
       if (previo) {
         const dy = Math.abs(previo.transform[5] - item.transform[5]);
@@ -1149,20 +1315,20 @@ async function procesarPdf(datos, nombre) {
   }
 
   // PDF escaneado: se puede VER, pero no hay texto que leer.
-  if (texto.trim().length < Math.max(60, documento.numPages * 20)) {
+  if (texto.trim().length < Math.max(60, numPaginas * 20)) {
     estado(
       'Este PDF parece escaneado: se puede ver, pero no tiene capa de texto que ' +
       'leer en voz alta. Haría falta OCR (reconocimiento óptico), que esta versión no incluye.',
       true
     );
-    return;
+    return false;
   }
 
   const rangos = LectorTTS.trocearRangos(texto, cortes)
     .filter((r) => texto.slice(r.ini, r.fin).trim());
   if (!rangos.length) {
     estado('No se encontró texto legible en el PDF.', true);
-    return;
+    return false;
   }
 
   vista = {
@@ -1181,7 +1347,31 @@ async function procesarPdf(datos, nombre) {
   } else {
     ocultarEstado();
   }
-  motor.iniciar(vista.textos, 0);
+  return true;
+}
+
+/**
+ * Vuelve a montar el documento porque han cambiado los ajustes de "qué se lee",
+ * y retoma en la misma frase: la busca por su texto, porque el cuerpo no cambia
+ * — solo aparecen o desaparecen cabeceras, pies, números y pies de imagen.
+ * Si la lectura estaba parada, sigue parada: no arranca sola.
+ */
+function reconstruirLectura() {
+  if (!documentoAbierto) return;
+  const pista = String(motor.oraciones[motor.indice] || '').trim().slice(0, 40);
+  const indicePrevio = motor.indice;
+  const sonando = motor.leyendo && !motor.enPausa;
+
+  limpiarResaltado();
+  if (!montarVista()) return;
+
+  let idx = Math.min(indicePrevio, vista.textos.length - 1);
+  if (pista) {
+    const j = vista.textos.findIndex((t) => t.trim().startsWith(pista));
+    if (j >= 0) idx = j;
+  }
+  if (sonando) motor.iniciar(vista.textos, idx);
+  else motor.cargar(vista.textos, idx);
 }
 
 // Clic sobre el texto del PDF = saltar a esa oración.

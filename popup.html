@@ -57,12 +57,27 @@
       width: 13px; height: 13px; border-radius: 50%;
       background: #fff; border: 3px solid #7c5cff; cursor: pointer;
     }
-    /* Control desactivado (p. ej. el tono con una voz neuronal): gris e inútil */
+    /* Control desactivado: gris e inútil */
     input[type="range"]:disabled { opacity: .4; cursor: not-allowed; }
     .paso:disabled { opacity: .4; cursor: not-allowed; }
     .paso:disabled:hover { background: #262633; }
-    .fila-slider.desactivado output { opacity: .4; }
-    label.desactivado { opacity: .55; }
+
+    /* "Qué se lee": lista de interruptores, uno por parte del documento */
+    .lista-lectura {
+      display: flex; flex-direction: column; gap: 2px;
+      border: 1px solid #3a3a4e; border-radius: 11px;
+      padding: 6px; background: #1c1c26;
+    }
+    .opcion-lectura {
+      display: grid; grid-template-columns: auto 1fr; gap: 4px 8px;
+      align-items: center; padding: 6px 7px; border-radius: 8px; cursor: pointer;
+    }
+    .opcion-lectura:hover { background: #262633; }
+    .opcion-lectura input { accent-color: #7c5cff; width: 15px; height: 15px; margin: 0; cursor: pointer; }
+    .opcion-lectura .nombre { font-size: 12.5px; font-weight: 600; }
+    .opcion-lectura .ayuda {
+      grid-column: 2; font-size: 10.5px; color: #6e6e80; line-height: 1.35;
+    }
 
     .botones { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 15px; }
     button {
@@ -116,15 +131,10 @@
     <output id="txt-vel">1.1×</output>
   </div>
 
-  <!-- Tono de la voz (voces del sistema), con contadores. Se desactiva en gris
-       al elegir una voz neuronal, que no admite cambio de tono. -->
-  <label for="rango-tono" id="lbl-tono">Tono <span style="color:#6e6e80">(voces del sistema)</span></label>
-  <div class="fila-slider" id="fila-tono">
-    <button class="paso" id="btn-tono-menos" title="Bajar 0.1">−</button>
-    <input type="range" id="rango-tono" min="0.5" max="2" step="0.1" value="1">
-    <button class="paso" id="btn-tono-mas" title="Subir 0.1">+</button>
-    <output id="txt-tono">1.0</output>
-  </div>
+  <!-- Qué se lee: las casillas las pinta popup.js desde LectorTTS.OPCIONES_LECTURA,
+       para que el lector de PDF y el popup ofrezcan siempre lo mismo. -->
+  <label>Qué se lee <span style="color:#6e6e80">(lo no marcado se salta)</span></label>
+  <div class="lista-lectura" id="lista-lectura"></div>
 
   <!-- Acciones principales -->
   <div class="botones">

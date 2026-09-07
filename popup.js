@@ -3,7 +3,7 @@
  *
  * El popup NO lee en voz alta (se cierra al hacer clic fuera y la voz se
  * cortaría). Solo:
- *   - guarda las preferencias (voz, velocidad, tono) en chrome.storage.sync,
+ *   - guarda las preferencias (voz, velocidad, qué se lee) en chrome.storage.sync,
  *   - manda órdenes al content script de la pestaña activa,
  *   - abre reader.html cuando la pestaña es un PDF,
  *   - muestra avisos amables cuando una página no se puede leer.
@@ -15,12 +15,7 @@
   const selVoz = document.getElementById('sel-voz');
   const rangoVel = document.getElementById('rango-vel');
   const txtVel = document.getElementById('txt-vel');
-  const rangoTono = document.getElementById('rango-tono');
-  const txtTono = document.getElementById('txt-tono');
-  const btnTonoMenos = document.getElementById('btn-tono-menos');
-  const btnTonoMas = document.getElementById('btn-tono-mas');
-  const filaTono = document.getElementById('fila-tono');
-  const lblTono = document.getElementById('lbl-tono');
+  const listaLectura = document.getElementById('lista-lectura');
   const btnLeerPagina = document.getElementById('btn-leer-pagina');
   const btnLeerSeleccion = document.getElementById('btn-leer-seleccion');
   const btnPausa = document.getElementById('btn-pausa');
@@ -32,7 +27,7 @@
   const btnClic = document.getElementById('btn-clic');
   const divEstado = document.getElementById('estado');
 
-  const AJUSTES_DEFECTO = { vozNombre: '', velocidad: 1.1, tono: 1.0 };
+  const AJUSTES_DEFECTO = LectorTTS.AJUSTES_DEFECTO;
   let ajustes = Object.assign({}, AJUSTES_DEFECTO);
 
   // ---- Utilidades -------------------------------------------------------
@@ -158,32 +153,63 @@
     if (selVoz.value !== (ajustes.vozNombre || '')) selVoz.value = '';
 
     avisarSegunVoz();
-    reflejarTono();
   }
 
   /** Pistas según la voz elegida y las voces disponibles. */
   function avisarSegunVoz() {
     if (LectorTTS.esVozNeural(selVoz.value)) {
-      mostrarAviso('Voz neuronal: la primera vez se descarga el modelo (25–120 MB según la voz). Después funciona sin conexión. (No permite ajustar el tono, solo la velocidad.)');
+      mostrarAviso('Voz neuronal: la primera vez se descarga el modelo (25–120 MB según la voz). Después funciona sin conexión.');
     } else if (!(speechSynthesis.getVoices() || []).length) {
       // Opera GX y otros Chromium sin voces del sistema.
       mostrarAviso('Tu navegador no trae voces del sistema (pasa en Opera GX): elige una voz 🌟 neuronal y listo.', true);
     }
   }
 
-  /**
-   * Activa o desactiva (en gris) el control de tono según la voz elegida: las
-   * voces neuronales Piper no admiten cambio de tono, solo de velocidad.
-   */
-  function reflejarTono() {
-    const permite = LectorTTS.soportaTono(selVoz.value);
-    rangoTono.disabled = !permite;
-    btnTonoMenos.disabled = !permite;
-    btnTonoMas.disabled = !permite;
-    filaTono.classList.toggle('desactivado', !permite);
-    lblTono.classList.toggle('desactivado', !permite);
-    lblTono.title = permite ? '' : 'Las voces neuronales no permiten cambiar el tono (solo la velocidad).';
+  // ---- "Qué se lee": una casilla por parte del documento --------------------
+
+  const casillasLectura = new Map();   // clave del ajuste → <input type=checkbox>
+
+  /** Pinta la lista de interruptores a partir de LectorTTS.OPCIONES_LECTURA. */
+  function pintarOpcionesLectura() {
+    listaLectura.innerHTML = '';
+    for (const op of LectorTTS.OPCIONES_LECTURA) {
+      const fila = document.createElement('label');
+      fila.className = 'opcion-lectura';
+      fila.title = op.ayuda;
+
+      const casilla = document.createElement('input');
+      casilla.type = 'checkbox';
+      casilla.checked = !!ajustes[op.clave];
+      casilla.addEventListener('change', () => {
+        ajustes[op.clave] = casilla.checked;
+        chrome.storage.sync.set({ [op.clave]: casilla.checked });
+      });
+
+      const nombre = document.createElement('span');
+      nombre.className = 'nombre';
+      nombre.textContent = op.etiqueta;
+
+      const ayuda = document.createElement('span');
+      ayuda.className = 'ayuda';
+      ayuda.textContent = op.ayuda;
+
+      fila.append(casilla, nombre, ayuda);
+      listaLectura.appendChild(fila);
+      casillasLectura.set(op.clave, casilla);
+    }
   }
+
+  // Si el ajuste cambia en otro sitio (el lector de PDF, otra ventana), que las
+  // casillas de aquí no se queden mintiendo.
+  chrome.storage.onChanged.addListener((cambios, area) => {
+    if (area !== 'sync') return;
+    for (const [clave, casilla] of casillasLectura) {
+      if (clave in cambios) {
+        ajustes[clave] = !!cambios[clave].newValue;
+        casilla.checked = ajustes[clave];
+      }
+    }
+  });
 
   // En Chromium getVoices() devuelve [] al abrir: repoblar cuando avisen.
   speechSynthesis.addEventListener('voiceschanged', poblarVoces);
@@ -203,7 +229,6 @@
     chrome.storage.sync.set({ vozNombre: selVoz.value });
     mostrarAviso('');
     avisarSegunVoz();
-    reflejarTono();
   });
 
   /** Pinta la parte "llena" del slider (efecto de barra de progreso). */
@@ -223,22 +248,10 @@
     guardarConRetraso({ velocidad: v });
   }
 
-  /** Fija el tono (desde el slider o los botones −/+) y lo guarda. */
-  function fijarTono(v) {
-    v = Math.round(Math.min(2, Math.max(0.5, v)) * 10) / 10;
-    rangoTono.value = String(v);
-    txtTono.textContent = v.toFixed(1);
-    pintarRelleno(rangoTono);
-    guardarConRetraso({ tono: v });
-  }
-
   rangoVel.addEventListener('input', () => fijarVelocidad(parseFloat(rangoVel.value)));
-  rangoTono.addEventListener('input', () => fijarTono(parseFloat(rangoTono.value)));
   // Contadores de −/+ 0.1
   document.getElementById('btn-vel-menos').addEventListener('click', () => fijarVelocidad(parseFloat(rangoVel.value) - 0.1));
   document.getElementById('btn-vel-mas').addEventListener('click', () => fijarVelocidad(parseFloat(rangoVel.value) + 0.1));
-  btnTonoMenos.addEventListener('click', () => fijarTono(parseFloat(rangoTono.value) - 0.1));
-  btnTonoMas.addEventListener('click', () => fijarTono(parseFloat(rangoTono.value) + 0.1));
 
   // ---- Botones ------------------------------------------------------------
 
@@ -276,9 +289,7 @@
     rangoVel.value = String(ajustes.velocidad);
     txtVel.textContent = Number(ajustes.velocidad).toFixed(1) + '×';
     pintarRelleno(rangoVel);
-    rangoTono.value = String(ajustes.tono);
-    txtTono.textContent = Number(ajustes.tono).toFixed(1);
-    pintarRelleno(rangoTono);
+    pintarOpcionesLectura();
     poblarVoces();
   });
 
